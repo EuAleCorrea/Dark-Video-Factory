@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  dark-factory-worker:
+    build: .
+    container_name: dark-factory-worker
+    restart: unless-stopped
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - TEMP_DIR=/tmp/dark-factory
+      - OUTPUT_DIR=/output
+    volumes:
+      # Mapear pasta de output para acesso local (opcional)
+      - ./output:/output
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

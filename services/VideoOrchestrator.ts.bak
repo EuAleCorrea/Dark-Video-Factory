@@ -1,0 +1,563 @@
+import { ChannelProfile, EngineConfig, JobStatus, LogEntry, MockFile, PipelineStep, StoryboardSegment, VideoJob } from "../types";
+import { generateVideoScriptAndPrompts, generateVideoMetadata, generateImage, generateSpeech } from "./geminiService";
+import { smartChunkScript, ScriptChunk } from "../lib/smartChunker";
+import { generateDockerCommand } from "../lib/ffmpegGenerator";
+import { generateAssContent } from "../lib/subtitleGenerator";
+import { pcmToWav, getAudioDuration } from "../lib/audioUtils";
+import { alignStoryboardToAudio } from "../lib/alignmentEngine";
+
+type Listener = (jobs: VideoJob[]) => void;
+
+/**
+ * VideoOrchestrator (The "Brain")
+ * Gerencia o ciclo de vida de produção de vídeo, persistência de estado e recuperação de falhas.
+ */
+export class VideoOrchestrator {
+  private jobs: VideoJob[] = [];
+  private listeners: Set<Listener> = new Set();
+  private abortControllers: Map<string, AbortController> = new Map();
+  private profileCache: Map<string, ChannelProfile> = new Map();
+  private currentConfig?: EngineConfig;
+  private isProcessing: boolean = false;
+
+  constructor() {}
+
+  public subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    listener(this.jobs);
+    return () => this.listeners.delete(listener);
+  }
+
+  public updateConfig(config: EngineConfig) {
+      this.currentConfig = config;
+  }
+
+  private emitUpdate() {
+    const snapshot = [...this.jobs];
+    this.listeners.forEach(l => l(snapshot));
+  }
+
+  private getJob(id: string): VideoJob | undefined {
+    return this.jobs.find(j => j.id === id);
+  }
+
+  private updateJob(id: string, updates: Partial<VideoJob>) {
+    this.jobs = this.jobs.map(j => j.id === id ? { ...j, ...updates } : j);
+    this.emitUpdate();
+  }
+
+  private log(jobId: string, message: string, level: LogEntry['level'] = 'INFO') {
+    const job = this.getJob(jobId);
+    if (!job) return;
+    
+    const entry: LogEntry = {
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour12: false }),
+      level,
+      message
+    };
+
+    const newLogs = [...job.logs, entry];
+    this.updateJob(jobId, { logs: newLogs });
+  }
+
+  private addFile(jobId: string, name: string, subPath: string, size: string, type: 'FILE' | 'DIR' = 'FILE') {
+    const job = this.getJob(jobId);
+    if (!job) return;
+
+    const path = `/opt/dark-factory/jobs/${jobId}/${subPath}`;
+    
+    // Evita duplicatas visuais no file browser
+    if (job.files.some(f => f.path === path)) return;
+
+    const file: MockFile = {
+        name,
+        path,
+        size,
+        type,
+        createdAt: new Date().toLocaleTimeString('pt-BR', { hour12: false })
+    };
+    this.updateJob(jobId, { files: [...job.files, file] });
+  }
+
+  private async sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private formatTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  // --- PUBLIC ACTIONS ---
+
+  public updateStoryboardSegment(jobId: string, segmentId: number, newText: string, newPrompt: string) {
+    const job = this.getJob(jobId);
+    if (!job || !job.result) return;
+    
+    const newStoryboard = job.result.storyboard.map(seg => {
+        if (seg.id === segmentId) {
+            return { ...seg, scriptText: newText, visualPrompt: newPrompt };
+        }
+        return seg;
+    });
+    
+    this.recalculateTimings(jobId, newStoryboard);
+  }
+
+  public splitSegment(jobId: string, segmentId: number) {
+    const job = this.getJob(jobId);
+    if (!job || !job.result) return;
+
+    const index = job.result.storyboard.findIndex(s => s.id === segmentId);
+    if (index === -1) return;
+
+    const original = job.result.storyboard[index];
+    const words = original.scriptText.split(' ');
+    
+    if (words.length < 2) {
+        this.log(jobId, `Segmento muito curto para dividir.`, 'WARN');
+        return;
+    }
+
+    const midPoint = Math.ceil(words.length / 2);
+    
+    const text1 = words.slice(0, midPoint).join(' ');
+    const text2 = words.slice(midPoint).join(' ');
+    const duration1 = parseFloat((original.duration / 2).toFixed(2));
+    const duration2 = parseFloat((original.duration - duration1).toFixed(2));
+
+    const seg1: StoryboardSegment = { ...original, scriptText: text1, duration: duration1 };
+    
+    // Gera novo ID único
+    const maxId = job.result.storyboard.reduce((max, s) => Math.max(max, s.id), 0);
+    const seg2: StoryboardSegment = { 
+        ...original, 
+        id: maxId + 1, 
+        scriptText: text2, 
+        duration: duration2,
+        assets: undefined // Remove imagem para forçar regeneração ou manter vazio
+    };
+
+    const newStoryboard = [...job.result.storyboard];
+    newStoryboard.splice(index, 1, seg1, seg2);
+
+    this.recalculateTimings(jobId, newStoryboard);
+    this.log(jobId, `Segmento #${segmentId} dividido em dois.`, 'INFO');
+  }
+
+  public deleteSegment(jobId: string, segmentId: number) {
+    const job = this.getJob(jobId);
+    if (!job || !job.result) return;
+
+    const newStoryboard = job.result.storyboard.filter(s => s.id !== segmentId);
+    this.recalculateTimings(jobId, newStoryboard);
+    this.log(jobId, `Segmento #${segmentId} excluído.`, 'WARN');
+  }
+
+  public async regenerateSegmentImage(jobId: string, segmentId: number) {
+      const job = this.getJob(jobId);
+      if (!job || !job.result) return;
+      const profile = this.profileCache.get(jobId);
+      if (!profile) return;
+      
+      const segment = job.result.storyboard.find(s => s.id === segmentId);
+      if(!segment) return;
+
+      const provider = this.currentConfig?.providers.image || 'GEMINI';
+      this.log(jobId, `Regenerando ativo visual #${segmentId} via ${provider}...`, 'INFO');
+      
+      const ar = profile.format === 'SHORTS' ? '9:16' : '16:9';
+      const base64Image = await generateImage(segment.visualPrompt, ar, this.currentConfig);
+
+      if (base64Image) {
+          const newStoryboard = job.result.storyboard.map(s => {
+              if (s.id === segmentId) {
+                  return { ...s, assets: { ...s.assets, imageUrl: base64Image } };
+              }
+              return s;
+          });
+          this.updateJob(jobId, { result: { ...job.result, storyboard: newStoryboard } });
+          this.log(jobId, `Ativo regenerado com sucesso.`, 'SUCCESS');
+          this.addFile(jobId, `image_regen_${segmentId}.png`, `images/regen_${segmentId}.png`, '1.4 MB');
+      } else {
+          this.log(jobId, `Falha ao regenerar ativo.`, 'ERROR');
+      }
+  }
+
+  private recalculateTimings(jobId: string, storyboard: StoryboardSegment[]) {
+     const job = this.getJob(jobId);
+     if (!job || !job.result) return;
+
+     let currentTime = 0;
+     const updatedStoryboard = storyboard.map(seg => {
+        const start = currentTime;
+        const end = currentTime + seg.duration;
+        currentTime = end;
+        return {
+            ...seg,
+            timeRange: `${this.formatTime(start)} - ${this.formatTime(end)}`
+        };
+     });
+
+     const newScript = updatedStoryboard.map(s => s.scriptText).join(' ');
+
+     this.updateJob(jobId, {
+        result: {
+            ...job.result,
+            storyboard: updatedStoryboard,
+            script: newScript
+        }
+    });
+  }
+
+  public async queueJob(profile: ChannelProfile, theme: string, modelChannel?: string, referenceScript?: string) {
+    const id = crypto.randomUUID().split('-')[0];
+    
+    const newJob: VideoJob = {
+      id,
+      channelId: profile.id,
+      theme,
+      modelChannel,
+      referenceScript,
+      status: JobStatus.QUEUED,
+      currentStep: PipelineStep.INIT,
+      progress: 0,
+      logs: [],
+      files: [],
+    };
+
+    this.jobs = [...this.jobs, newJob];
+    this.profileCache.set(id, profile);
+    this.emitUpdate();
+    
+    this.log(id, 'Job na Fila. Aguardando worker...', 'INFO');
+    this.processQueue();
+  }
+
+  private async processQueue() {
+    if (this.isProcessing) return;
+
+    const nextJob = this.jobs.find(j => j.status === JobStatus.QUEUED);
+    if (!nextJob) return;
+
+    this.isProcessing = true;
+    const ac = new AbortController();
+    this.abortControllers.set(nextJob.id, ac);
+    const profile = this.profileCache.get(nextJob.id)!;
+
+    this.updateJob(nextJob.id, { status: JobStatus.PROCESSING });
+
+    try {
+      // Inicia do começo (Fase 1: Script & Storyboard)
+      await this.runPhaseOne(nextJob.id, profile);
+    } catch (error) {
+      this.handleError(nextJob.id, error);
+      this.isProcessing = false;
+      this.processQueue();
+    }
+  }
+
+  public async proceedToProduction(jobId: string) {
+    const job = this.getJob(jobId);
+    if (!job || job.status !== JobStatus.REVIEW_PENDING) return;
+    
+    this.updateJob(jobId, { status: JobStatus.PROCESSING });
+    this.log(jobId, 'Storyboard aprovado. Iniciando Fase de Produção (Audio/Visual)...', 'SUCCESS');
+    
+    this.isProcessing = true;
+    const profile = this.profileCache.get(jobId)!;
+
+    try {
+        await this.runPhaseTwo(jobId, profile);
+    } catch (error) {
+        this.handleError(jobId, error);
+    } finally {
+        this.isProcessing = false;
+        this.processQueue();
+    }
+  }
+
+  /**
+   * SMART RETRY LOGIC
+   * Analisa onde o Job falhou e retoma do ponto correto.
+   */
+  public async retryJob(jobId: string) {
+    const job = this.getJob(jobId);
+    if (!job) return;
+    
+    // Se o perfil não estiver em cache (ex: page refresh), recarrega via API ou localStorage seria o ideal.
+    // Aqui assumimos que o 'profileCache' está quente ou usamos o primeiro compatível.
+    let profile = this.profileCache.get(jobId);
+    
+    // Fallback de segurança para o profile se perdemos o cache
+    if (!profile) {
+        this.log(jobId, 'Recuperando contexto do perfil...', 'WARN');
+        // Hack: Tenta encontrar o perfil na lista atual do App via Job (conceitual)
+        // Em um app real, buscaríamos no DB. Aqui vamos abortar se não tiver profile.
+        this.log(jobId, 'Erro Crítico: Contexto do perfil perdido. Crie um novo job.', 'ERROR');
+        return;
+    }
+    
+    this.log(jobId, `Analisando ponto de falha para recuperação inteligente...`, 'WARN');
+    this.updateJob(jobId, { status: JobStatus.PROCESSING });
+    this.isProcessing = true;
+
+    try {
+        // DECISÃO DE RETOMADA:
+        // Se falhou antes de ter um storyboard (Init, Scripting), roda Fase 1.
+        // Se já tem storyboard (Approval, Voice, Image, Rendering), roda Fase 2.
+        
+        if (!job.result || !job.result.storyboard || job.result.storyboard.length === 0) {
+             this.log(jobId, 'Retomando da FASE 1 (Roteiro e Estrutura)...', 'INFO');
+             await this.runPhaseOne(jobId, profile);
+        } else {
+             this.log(jobId, 'Retomando da FASE 2 (Produção de Assets e Render)...', 'INFO');
+             // Se falhou na renderização, podemos até pular geração de voz se já existir, 
+             // mas por segurança rodamos a Fase 2 completa para garantir sincronia.
+             await this.runPhaseTwo(jobId, profile);
+        }
+
+    } catch (error) {
+        this.handleError(jobId, error);
+    } finally {
+        this.isProcessing = false;
+        this.processQueue();
+    }
+  }
+
+  public cancelJob(jobId: string) {
+    const ac = this.abortControllers.get(jobId);
+    if (ac) {
+        ac.abort();
+        this.log(jobId, 'Job cancelado pelo usuário via SIGKILL.', 'WARN');
+        this.updateJob(jobId, { status: JobStatus.FAILED });
+        this.isProcessing = false;
+        this.processQueue();
+    }
+  }
+
+  private handleError(jobId: string, error: unknown) {
+    this.updateJob(jobId, { status: JobStatus.FAILED });
+    this.log(jobId, `Erro Fatal no Pipeline: ${(error as Error).message}`, 'ERROR');
+  }
+
+  // --- FASE 1: CRIATIVO (Roteiro -> Storyboard -> Aprovação) ---
+  private async runPhaseOne(jobId: string, profile: ChannelProfile) {
+    const job = this.getJob(jobId)!;
+    
+    this.log(jobId, `Inicializando Workspace: /opt/dark-factory/jobs/${jobId}`, 'INFO');
+    await this.sleep(600);
+    this.addFile(jobId, 'logs', 'logs/', '0 KB', 'DIR');
+    this.addFile(jobId, 'temp', 'temp/', '0 KB', 'DIR');
+
+    this.updateJob(jobId, { currentStep: PipelineStep.SCRIPTING, progress: 10 });
+    const scriptProvider = this.currentConfig?.providers.scripting || 'GEMINI';
+    
+    if (job.modelChannel) {
+        this.log(jobId, `Modo One-Shot Learning: Ativo [Ref: ${job.modelChannel}]`, 'INFO');
+        if (job.referenceScript) {
+             this.log(jobId, `Ingestão de Transcrição Base (${job.referenceScript.length} chars).`, 'SUCCESS');
+             this.addFile(jobId, 'reference_transcript.txt', 'ref.txt', '8.5 KB');
+        }
+    }
+
+    this.log(jobId, `Gerando Roteiro e Prompts Visuais [LLM: ${scriptProvider}]`, 'INFO');
+    
+    let generatedData;
+    try {
+        generatedData = await generateVideoScriptAndPrompts(profile, job.theme, this.currentConfig, job.modelChannel, job.referenceScript);
+    } catch (e) {
+        throw new Error(`Falha no LLM Provider (${scriptProvider}): ${(e as Error).message}`);
+    }
+    
+    if (!generatedData.script || !generatedData.visualPrompts) {
+        throw new Error("O LLM retornou um JSON inválido ou incompleto.");
+    }
+
+    this.log(jobId, `Roteiro gerado com sucesso.`, 'SUCCESS');
+    this.addFile(jobId, 'script.json', 'script.json', '4.2 KB');
+    
+    this.updateJob(jobId, { currentStep: PipelineStep.TRANSCRIPTION_CHUNKING, progress: 25 });
+    this.log(jobId, `Aplicando Smart Chunking (9s - 18s Rule)...`, 'INFO');
+    
+    const scriptChunks: ScriptChunk[] = smartChunkScript(generatedData.script);
+    
+    let currentTime = 0;
+    const storyboard: StoryboardSegment[] = scriptChunks.map((chunk, index) => {
+        const start = currentTime;
+        const end = currentTime + chunk.durationEstimate;
+        currentTime = end;
+        
+        // Distribuição cíclica de prompts se houver menos prompts que chunks
+        const promptIndex = index % generatedData.visualPrompts.length;
+        const basePrompt = generatedData.visualPrompts[promptIndex];
+
+        return {
+            id: chunk.id,
+            timeRange: `${this.formatTime(start)} - ${this.formatTime(end)}`,
+            duration: chunk.durationEstimate,
+            scriptText: chunk.text,
+            visualPrompt: `${basePrompt} --style ${profile.visualStyle} --ar ${profile.format === 'SHORTS' ? '9:16' : '16:9'}`
+        };
+    });
+
+    this.updateJob(jobId, {
+        result: {
+            script: generatedData.script,
+            rawPrompts: generatedData.visualPrompts,
+            storyboard: storyboard
+        },
+        status: JobStatus.REVIEW_PENDING,
+        currentStep: PipelineStep.APPROVAL,
+        progress: 30
+    });
+    
+    this.log(jobId, `Pipeline pausado para Revisão Humana.`, 'WARN');
+    this.isProcessing = false;
+    this.processQueue();
+  }
+
+  // --- FASE 2: PRODUÇÃO (Voz -> Imagem -> Render -> Upload) ---
+  private async runPhaseTwo(jobId: string, profile: ChannelProfile) {
+    const job = this.getJob(jobId)!;
+    let storyboard = job.result?.storyboard || [];
+
+    // VOZ
+    this.updateJob(jobId, { currentStep: PipelineStep.VOICE_GEN, progress: 40 });
+    const ttsProvider = this.currentConfig?.providers.tts || 'GEMINI';
+    this.log(jobId, `Sintetizando Narração [Provider: ${ttsProvider}]...`, 'INFO');
+    
+    let wavUrl = '';
+    let totalAudioDuration = 0;
+
+    try {
+        const finalScript = storyboard.map(s => s.scriptText).join(' ');
+        const pcmBase64 = await generateSpeech(finalScript, profile.voiceProfile, this.currentConfig);
+        
+        if (pcmBase64) {
+             wavUrl = pcmToWav(pcmBase64, 24000);
+             this.log(jobId, `Analisando waveform e calculando duração exata...`, 'INFO');
+             totalAudioDuration = await getAudioDuration(wavUrl);
+             this.log(jobId, `Duração de Áudio: ${totalAudioDuration.toFixed(2)}s`, 'INFO');
+             this.addFile(jobId, 'audio_master.wav', 'audio_master.wav', `${(pcmBase64.length / 1024).toFixed(1)} KB`);
+        } else {
+             throw new Error("O provedor de TTS retornou dados vazios.");
+        }
+    } catch (e) {
+        throw new Error(`Erro na síntese de voz: ${(e as Error).message}`);
+    }
+
+    // AUDIO MIXING & SYNC
+    this.updateJob(jobId, { currentStep: PipelineStep.AUDIO_MIXING, progress: 48 });
+    this.log(jobId, `Mixando trilha BGM: [${profile.bgmTheme}]`, 'INFO');
+    await this.sleep(800);
+    const bgmFilename = `bgm_${profile.bgmTheme}.mp3`;
+    this.addFile(jobId, bgmFilename, bgmFilename, '4.8 MB');
+
+    this.updateJob(jobId, { currentStep: PipelineStep.TRANSCRIPTION_ALIGN, progress: 55 });
+    this.log(jobId, `Realinhando Storyboard com Áudio Real (Drift Correction)...`, 'INFO');
+    const alignedStoryboard = alignStoryboardToAudio(storyboard, totalAudioDuration);
+    
+    this.updateJob(jobId, {
+        result: {
+            ...job.result!,
+            storyboard: alignedStoryboard,
+            masterAudioUrl: wavUrl 
+        }
+    });
+
+    const assContent = generateAssContent(alignedStoryboard, profile);
+    await this.sleep(500);
+    this.addFile(jobId, 'subs.ass', 'subs.ass', '1.2 KB');
+
+    // IMAGEM
+    this.updateJob(jobId, { currentStep: PipelineStep.IMAGE_PROMPTING, progress: 70 });
+    storyboard = alignedStoryboard; 
+    const imgProvider = this.currentConfig?.providers.image || 'GEMINI';
+    
+    this.log(jobId, `Iniciando Geração de Frames [Provider: ${imgProvider}]...`, 'INFO');
+    this.addFile(jobId, 'images', 'images/', '0 KB', 'DIR');
+    
+    const aspectRatio = profile.format === 'SHORTS' ? '9:16' : '16:9';
+    
+    for (let i = 0; i < storyboard.length; i++) {
+        const seg = storyboard[i];
+        
+        // Verifica se a imagem já existe (em caso de retry/resume)
+        if (seg.assets?.imageUrl && !seg.assets.imageUrl.includes('placehold.co')) {
+             this.log(jobId, `Frame ${i+1}/${storyboard.length} já existe em cache. Pulando.`, 'INFO');
+             continue;
+        }
+
+        try {
+            const base64Image = await generateImage(seg.visualPrompt, aspectRatio, this.currentConfig);
+            const imageUrl = base64Image || `https://placehold.co/${profile.format === 'SHORTS' ? '540x960' : '960x540'}/1e293b/475569?text=Geracao+Falhou`;
+
+            const assets = { ...seg.assets, imageUrl };
+            storyboard[i] = { ...seg, assets };
+            
+            // Salva estado parcial para evitar perda total em crash
+            this.updateJob(jobId, {
+                result: { ...job.result!, storyboard: [...storyboard] }
+            });
+
+            this.log(jobId, `Frame ${i+1}/${storyboard.length} renderizado.`, 'INFO');
+            this.addFile(jobId, `${String(i+1).padStart(3, '0')}.png`, `images/${String(i+1).padStart(3, '0')}.png`, '1.2 MB');
+        } catch (e) {
+            this.log(jobId, `Erro ao gerar frame ${i+1}: ${(e as Error).message}. Usando placeholder.`, 'WARN');
+        }
+    }
+
+    // RENDER FINAL
+    this.updateJob(jobId, { currentStep: PipelineStep.RENDERING, progress: 85 });
+    this.log(jobId, `Construindo grafo de filtros FFmpeg...`, 'WARN');
+    
+    const dockerCmd = generateDockerCommand(
+        jobId, 
+        profile.format, 
+        `/data/audio_master.wav`, 
+        `/data/${bgmFilename}`,
+        `/data/subs.ass`, 
+        storyboard.length
+    );
+
+    this.log(jobId, `$ ${dockerCmd.substring(0, 50)}...`, 'INFO');
+    await this.sleep(3000); // Simula tempo de render
+
+    // METADADOS
+    this.updateJob(jobId, { currentStep: PipelineStep.METADATA_GEN, progress: 92 });
+    this.log(jobId, `Gerando Metadados SEO...`, 'INFO');
+    
+    const finalScript = storyboard.map(s => s.scriptText).join(' ');
+    try {
+        const metadata = await generateVideoMetadata(profile, finalScript, this.currentConfig);
+        
+        if (metadata.thumbnailPrompt) {
+             this.log(jobId, `Renderizando Thumbnail High-Res...`, 'INFO');
+             const thumbBase64 = await generateImage(metadata.thumbnailPrompt, '16:9', this.currentConfig);
+             if (thumbBase64) metadata.thumbnailUrl = thumbBase64;
+        }
+        
+        this.updateJob(jobId, { metadata });
+        this.log(jobId, `Pacote de metadados compilado.`, 'SUCCESS');
+        this.addFile(jobId, 'metadata.json', 'metadata.json', '1.2 KB');
+
+    } catch(e) {
+        this.log(jobId, `Erro Metadados (Não crítico): ${(e as Error).message}`, 'WARN');
+    }
+
+    // UPLOAD
+    this.updateJob(jobId, { currentStep: PipelineStep.UPLOADING, progress: 95 });
+    this.log(jobId, `Job Finalizado com Sucesso.`, 'SUCCESS');
+    this.addFile(jobId, `output_${profile.format}.mp4`, `output_${profile.format}.mp4`, '14.5 MB');
+    
+    if (profile.youtubeCredentials) {
+        this.log(jobId, `YouTube API: Enviando vídeo para o canal...`, 'INFO');
+        await this.sleep(1500);
+        this.log(jobId, `Upload Confirmado. ID: dQw4w9WgXcQ`, 'SUCCESS');
+    }
+
+    this.updateJob(jobId, { currentStep: PipelineStep.DONE, progress: 100, status: JobStatus.COMPLETED });
+  }
+}

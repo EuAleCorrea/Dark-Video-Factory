@@ -1,0 +1,5 @@
+{
+  "name": "Dark Video Factory",
+  "description": "Um painel de controle de missão profissional para pipelines automatizados de produção de vídeo. Gerencie perfis de canais, prompts e visualize a fila de renderização.",
+  "requestFramePermissions": []
+}

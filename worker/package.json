@@ -1,0 +1,24 @@
+{
+    "name": "dark-factory-worker",
+    "version": "1.0.0",
+    "description": "Local FFmpeg rendering worker for Dark Video Factory",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "dev": "ts-node src/index.ts",
+        "docker:build": "docker build -t dark-factory-worker .",
+        "docker:run": "docker-compose up -d"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.49.1",
+        "@types/fluent-ffmpeg": "^2.1.28",
+        "dotenv": "^16.4.5",
+        "fluent-ffmpeg": "^2.1.3"
+    },
+    "devDependencies": {
+        "@types/node": "^22.13.1",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.7.3"
+    }
+}
