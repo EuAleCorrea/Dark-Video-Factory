@@ -43,17 +43,33 @@ export enum JobStatus {
 }
 
 export enum PipelineStep {
+  // Etapa 0: Busca de Referência
+  REFERENCE_FETCH = 'Buscando Vídeo Modelo',
+  REFERENCE_TRANSCRIBE = 'Transcrevendo Referência',
+
+  // Etapa 1: Criação do Roteiro
   INIT = 'Inicializando',
   SCRIPTING = 'Gerando Roteiro (LLM)',
   TRANSCRIPTION_CHUNKING = 'Chunking Inteligente & Timing',
+
+  // Etapa 2: Revisão Humana
   APPROVAL = 'Aguardando Revisão Humana',
+
+  // Etapa 3-5: Produção de Assets
   VOICE_GEN = 'Sintetizando Áudio (TTS)',
   AUDIO_MIXING = 'Engenharia de Áudio (BGM + Mix)',
   TRANSCRIPTION_ALIGN = 'Transcrição Whisper & Alinhamento',
   IMAGE_PROMPTING = 'Gerando Ativos Visuais (IA)',
+
+  // Etapa 6: Renderização (LOCAL)
+  RENDERING_PENDING = 'Aguardando Renderização',
   RENDERING = 'Renderização FFmpeg Docker',
+
+  // Etapa 7-8: Finalização
   THUMBNAIL_GEN = 'Gerando Thumbnail (IA)',
   METADATA_GEN = 'Gerando Metadados Virais (SEO)',
+
+  // Etapa 9: Publicação
   UPLOADING = 'Enviando para o YouTube',
   DONE = 'Finalizado',
 }
