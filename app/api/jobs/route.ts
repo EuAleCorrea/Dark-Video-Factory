@@ -18,6 +18,12 @@ export async function POST(request: Request) {
         }
 
         const jobId = uuidv4();
+
+        // Se houver canal modelo mas não houver script, começamos pela etapa de referência
+        const initialStep = (modelChannel && !referenceScript)
+            ? PipelineStep.REFERENCE_FETCH
+            : PipelineStep.INIT;
+
         const newJob: VideoJob = {
             id: jobId,
             channelId,
@@ -25,7 +31,7 @@ export async function POST(request: Request) {
             modelChannel,
             referenceScript,
             status: JobStatus.QUEUED,
-            currentStep: PipelineStep.INIT,
+            currentStep: initialStep,
             progress: 0,
             logs: [],
             files: [],
