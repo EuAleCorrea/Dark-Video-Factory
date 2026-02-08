@@ -100,11 +100,12 @@ async function handleReferenceTranscribe(job: VideoJob, config: EngineConfig) {
     await addLog(job.id, `Iniciando transcrição via Apify para o vídeo: ${videoId}`);
 
     try {
-        const transcript = await ReferenceService.transcribeReference(videoId, config);
+        const { transcript, metadata } = await ReferenceService.transcribeReference(videoId, config);
         await addLog(job.id, `Transcrição concluída com sucesso (${transcript.length} caracteres).`, 'SUCCESS');
 
         await updateJobStatus(job.id, {
             referenceScript: transcript,
+            referenceMetadata: metadata,
             currentStep: PipelineStep.INIT,
             progress: 20
         });

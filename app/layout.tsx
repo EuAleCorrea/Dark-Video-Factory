@@ -12,7 +12,7 @@ export default function RootLayout({
     children: React.ReactNode;
 }>) {
     return (
-        <html lang="pt-BR" className="dark">
+        <html lang="pt-BR" className="dark" suppressHydrationWarning>
             <head>
                 <link
                     href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap"
@@ -23,7 +23,7 @@ export default function RootLayout({
                     rel="stylesheet"
                 />
             </head>
-            <body className="bg-[#0a0a0a] text-slate-100 h-screen w-screen overflow-hidden antialiased selection:bg-primary selection:text-black">
+            <body className="bg-[#0a0a0a] text-slate-100 h-screen w-screen overflow-hidden antialiased selection:bg-primary selection:text-black" suppressHydrationWarning>
                 <div id="root" className="h-full flex flex-col">
                     {children}
                 </div>

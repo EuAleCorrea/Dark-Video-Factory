@@ -5,30 +5,51 @@
  */
 
 const APIFY_BASE_URL = 'https://api.apify.com/v2';
-// Actor ID for "YouTube Transcript Scraper"
-const ACTOR_ID = 'dtrungtin/youtube-transcript'; 
+const ACTOR_ID = 'starvibe~youtube-video-transcript';
 
 interface ApifyRun {
-  id: string;
-  defaultDatasetId: string;
-  status: 'READY' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED-OUT' | 'ABORTED';
+    id: string;
+    defaultDatasetId: string;
+    status: 'READY' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED-OUT' | 'ABORTED';
 }
 
 /**
  * Dispara o scraper de transcrição e aguarda o resultado.
  * Implementa padrão de Polling com Circuit Breaker (Timeout).
  */
-export const fetchYoutubeTranscriptFromApify = async (videoId: string, apiToken: string): Promise<string> => {
+export const fetchYoutubeTranscriptFromApify = async (videoId: string, apiToken: string): Promise<{ transcript: string, metadata: any }> => {
+    // SE ESTIVER NO NAVEGADOR: Usa nossa Rota de API como Proxy para evitar CORS
+    if (typeof window !== 'undefined') {
+        console.log(`[Apify Client] Ambiente Browser detectado. Usando Proxy local para ${videoId}`);
+        const response = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId, apiToken })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Falha na transcrição via Proxy');
+        }
+
+        const data = await response.json();
+        return {
+            transcript: data.transcript,
+            metadata: data.metadata
+        };
+    }
+
+    // SE ESTIVER NO SERVIDOR (Cloud Worker ou Proxy): Faz a chamada direta para a Apify
     try {
-        console.log(`[Apify] Iniciando job para video: ${videoId}`);
+        console.log(`[Apify] Iniciando job real (starvibe) para video: ${videoId}`);
 
         // 1. Start the Actor
         const run = await triggerActor(videoId, apiToken);
         console.log(`[Apify] Run ID: ${run.id}. Aguardando processamento...`);
 
-        // 2. Poll for completion (Max 60 seconds)
+        // 2. Poll for completion (Max 120 seconds for this heavier actor)
         const finishedRun = await waitForRunCompletion(run.id, apiToken);
-        
+
         if (finishedRun.status !== 'SUCCEEDED') {
             throw new Error(`Apify run failed with status: ${finishedRun.status}`);
         }
@@ -42,12 +63,28 @@ export const fetchYoutubeTranscriptFromApify = async (videoId: string, apiToken:
             throw new Error("Nenhuma transcrição encontrada. O vídeo pode não ter legendas habilitadas.");
         }
 
-        const fullText = items
-            .map((item: any) => item.text)
-            .filter((t: any) => t) // Remove vazios
-            .join(' ');
+        // O ator starvibe retorna um array de objetos rincos.
+        const result = items[0];
 
-        return fullText;
+        const transcript = result.transcript_text ||
+            (Array.isArray(result.transcript) ? result.transcript.map((seg: any) => seg.text).join(' ') : '');
+
+        if (!transcript && !result.title) {
+            throw new Error("Formato de resposta do ator desconhecido ou vazio.");
+        }
+
+        // Retornamos o pacote completo
+        return {
+            transcript,
+            metadata: {
+                title: result.title,
+                description: result.description,
+                viewCount: result.viewCount,
+                date: result.date,
+                channelName: result.channelName,
+                duration: result.duration
+            }
+        };
 
     } catch (error) {
         console.error("[Apify Error]", error);
@@ -57,13 +94,15 @@ export const fetchYoutubeTranscriptFromApify = async (videoId: string, apiToken:
 
 async function triggerActor(videoId: string, token: string): Promise<ApifyRun> {
     const url = `${APIFY_BASE_URL}/acts/${ACTOR_ID}/runs?token=${token}`;
-    
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
     const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            videoId: videoId,
-            lang: 'pt', // Preferência por PT
+            youtube_url: videoUrl,
+            language: 'pt',
+            include_transcript_text: true
         })
     });
 
@@ -78,7 +117,7 @@ async function triggerActor(videoId: string, token: string): Promise<ApifyRun> {
 
 async function waitForRunCompletion(runId: string, token: string): Promise<ApifyRun> {
     const url = `${APIFY_BASE_URL}/acts/${ACTOR_ID}/runs/${runId}?token=${token}`;
-    
+
     const POLLING_INTERVAL = 3000; // 3s
     const MAX_ATTEMPTS = 20; // 20 * 3s = 60s Timeout
     let attempts = 0;
@@ -99,7 +138,7 @@ async function waitForRunCompletion(runId: string, token: string): Promise<Apify
         if (run.status === 'SUCCEEDED' || run.status === 'FAILED' || run.status === 'ABORTED' || run.status === 'TIMED-OUT') {
             return run;
         }
-        
+
         console.log(`[Apify] Status: ${run.status} (Tentativa ${attempts}/${MAX_ATTEMPTS})`);
     }
 

@@ -69,6 +69,7 @@ const mapJobFromDB = (row: any): VideoJob => ({
     theme: row.theme,
     modelChannel: row.model_channel,
     referenceScript: row.reference_script,
+    referenceMetadata: row.reference_metadata,
     status: row.status,
     currentStep: row.current_step,
     progress: row.progress,

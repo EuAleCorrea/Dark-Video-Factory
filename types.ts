@@ -12,16 +12,25 @@ export interface SubtitleConfig {
   alignment: 'BOTTOM' | 'CENTER' | 'TOP';
 }
 
+export interface ChannelPrompt {
+  id: string;
+  profileId: string;
+  promptText: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
 export interface ChannelProfile {
   id: string;
   name: string;
   format: VideoFormat;
-  visualStyle: string; // Flux.1 base prompt
-  voiceProfile: string; // TTS Voice ID
-  bgmTheme: string; // Audio Atmosphere
-  subtitleStyle: SubtitleConfig; // New: Typography control
-  llmPersona: string; // System prompt
-  youtubeCredentials: boolean; // Mock connected state
+  visualStyle: string;
+  voiceProfile: string;
+  bgmTheme: string;
+  subtitleStyle: SubtitleConfig;
+  llmPersona: string;
+  youtubeCredentials: boolean;
+  activePromptId?: string; // NOVO: ID do prompt versionado ativo
 }
 
 export interface ReferenceVideo {
@@ -30,50 +39,37 @@ export interface ReferenceVideo {
   thumbnailUrl: string;
   views: string;
   duration: string;
-  publishedAt: string; // NOVO: Data de publicação para ordenação
-  transcript?: string; // Loaded after selection
+  publishedAt: string;
+  transcript?: string;
 }
 
 export enum JobStatus {
   QUEUED = 'QUEUED',
   PROCESSING = 'PROCESSING',
-  REVIEW_PENDING = 'REVIEW_PENDING', // Waiting for human approval
+  REVIEW_PENDING = 'REVIEW_PENDING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  PENDING = 'PENDING',
 }
 
 export enum PipelineStep {
-  // Etapa 0: Busca de Referência
   REFERENCE_FETCH = 'Buscando Vídeo Modelo',
   REFERENCE_TRANSCRIBE = 'Transcrevendo Referência',
-
-  // Etapa 1: Criação do Roteiro
   INIT = 'Inicializando',
   SCRIPTING = 'Gerando Roteiro (LLM)',
   TRANSCRIPTION_CHUNKING = 'Chunking Inteligente & Timing',
-
-  // Etapa 2: Revisão Humana
   APPROVAL = 'Aguardando Revisão Humana',
-
-  // Etapa 3-5: Produção de Assets
   VOICE_GEN = 'Sintetizando Áudio (TTS)',
   AUDIO_MIXING = 'Engenharia de Áudio (BGM + Mix)',
   TRANSCRIPTION_ALIGN = 'Transcrição Whisper & Alinhamento',
   IMAGE_PROMPTING = 'Gerando Ativos Visuais (IA)',
-
-  // Etapa 6: Renderização (LOCAL)
   RENDERING_PENDING = 'Aguardando Renderização',
   RENDERING = 'Renderização FFmpeg Docker',
-
-  // Etapa 7-8: Finalização
   THUMBNAIL_GEN = 'Gerando Thumbnail (IA)',
   METADATA_GEN = 'Gerando Metadados Virais (SEO)',
-
-  // Etapa 9: Publicação
   UPLOADING = 'Enviando para o YouTube',
   DONE = 'Finalizado',
 }
-
 
 export interface LogEntry {
   timestamp: string;
@@ -83,13 +79,13 @@ export interface LogEntry {
 
 export interface StoryboardSegment {
   id: number;
-  timeRange: string; // e.g. "00:00 - 00:12"
+  timeRange: string;
   scriptText: string;
   visualPrompt: string;
   duration: number;
   assets?: {
     imageUrl?: string;
-    audioUrl?: string; // Legacy segment audio
+    audioUrl?: string;
   };
 }
 
@@ -113,19 +109,52 @@ export interface VideoJob {
   id: string;
   channelId: string;
   modelChannel?: string;
-  referenceScript?: string; // NOVO: Conteúdo transcrito do vídeo modelo
+  referenceScript?: string;
+  referenceMetadata?: any;
+  appliedPromptId?: string; // NOVO: ID do prompt fixado neste vídeo
   theme: string;
   status: JobStatus;
   currentStep: PipelineStep;
   progress: number;
   logs: LogEntry[];
-  files: MockFile[]; // Track virtual filesystem state
+  files: MockFile[];
   metadata?: VideoMetadata;
   result?: {
     script: string;
     storyboard: StoryboardSegment[];
     rawPrompts: string[];
-    masterAudioUrl?: string; // The full duration synchronized wav
+    masterAudioUrl?: string;
+  };
+}
+
+export interface SystemMetrics {
+  cpuUsage: number;
+  ramUsage: number;
+  gpuUsage: number;
+  dockerStatus: 'CONNECTED' | 'DISCONNECTED';
+  activeContainers: number;
+  temperature: number;
+}
+
+export interface EngineConfig {
+  hostVolumePath: string;
+  ffmpegContainerImage: string;
+  maxConcurrentJobs: number;
+  providers: {
+    scripting: 'GEMINI' | 'OPENAI' | 'OPENROUTER';
+    image: 'GEMINI' | 'FLUX';
+    tts: 'GEMINI' | 'ELEVENLABS';
+  };
+  apiKeys: {
+    gemini: string;
+    youtube?: string;
+    apify?: string;
+    supabaseUrl?: string;
+    supabaseKey?: string;
+    elevenLabs: string;
+    flux: string;
+    openai: string;
+    openrouter: string;
   };
 }
 

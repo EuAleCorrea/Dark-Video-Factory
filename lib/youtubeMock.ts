@@ -40,6 +40,7 @@ const MOCK_VIDEOS: ReferenceVideo[] = [
 // --- REAL API HELPERS ---
 
 const parseDuration = (ptDuration: string): string => {
+    if (!ptDuration) return "00:00";
     // Converts PT1H2M10S to 01:02:10 or 05:30
     const match = ptDuration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
     if (!match) return "00:00";
@@ -77,23 +78,23 @@ export const searchChannelVideos = async (channelQuery: string, apiKey?: string)
 
     try {
         console.log("Fetching Real Data from YouTube API...");
-        
+
         // 1. Find Channel ID
         const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(channelQuery)}&type=channel&key=${apiKey}`;
         const searchRes = await fetch(searchUrl);
         const searchData = await searchRes.json();
-        
+
         if (!searchData.items || searchData.items.length === 0) {
             throw new Error("Canal não encontrado");
         }
-        
+
         const channelId = searchData.items[0].id.channelId;
 
         // 2. Get Recent Videos
         const videosUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&order=date&maxResults=9&type=video&key=${apiKey}`;
         const videosRes = await fetch(videosUrl);
         const videosData = await videosRes.json();
-        
+
         if (!videosData.items) return [];
 
         // 3. Get Video Details (Duration & Views require 'videos' endpoint, not 'search')
@@ -115,7 +116,7 @@ export const searchChannelVideos = async (channelQuery: string, apiKey?: string)
                 duration: detail ? parseDuration(detail.contentDetails.duration) : '--:--',
                 // Note: YouTube API does NOT provide transcripts/captions directly in search. 
                 // We keep this null or use a placeholder for the orchestrator to simulate generation.
-                transcript: undefined 
+                transcript: undefined
             };
         });
 
@@ -130,8 +131,8 @@ export const searchChannelVideos = async (channelQuery: string, apiKey?: string)
  * - Se `apifyKey` for fornecido: Dispara um Scraper no Apify (Real).
  * - Se não: Usa Mock ou Placeholder.
  */
-export const transcribeVideo = async (videoId: string, apifyKey?: string): Promise<string> => {
-    
+export const transcribeVideo = async (videoId: string, apifyKey?: string): Promise<{ transcript: string, metadata: any }> => {
+
     // 1. Tenta usar Apify Scraper Real
     if (apifyKey) {
         try {
@@ -139,15 +140,21 @@ export const transcribeVideo = async (videoId: string, apifyKey?: string): Promi
         } catch (error) {
             console.error("Falha no Apify, caindo para simulação...", error);
             // Fallback para simulação se o scraper falhar
-            return `[ERRO APIFY: ${(error as Error).message}] - SIMULAÇÃO ATIVADA.\n\nNeste vídeo simulado, abordaremos o tema de forma genérica para não travar o fluxo...`;
+            return {
+                transcript: `[ERRO APIFY: ${(error as Error).message}] - SIMULAÇÃO ATIVADA.\n\nNeste vídeo simulado, abordaremos o tema de forma genérica para não travar o fluxo...`,
+                metadata: { error: true, message: (error as Error).message }
+            };
         }
     }
 
     // 2. Fallback Mock (Sem chave Apify)
     await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const mock = MOCK_VIDEOS.find(v => v.id === videoId);
-    if (mock) return mock.transcript || "";
 
-    return `[SIMULAÇÃO DE TRANSCRIÇÃO PARA O VÍDEO ${videoId}]\n\nNeste vídeo, vamos explorar os conceitos fundamentais do tema proposto. É importante observar que a estrutura narrativa segue um padrão de gancho inicial, desenvolvimento de três pontos chaves e uma conclusão com call-to-action. (Nota: Configure a chave da Apify para extração real).`;
+    const mock = MOCK_VIDEOS.find(v => v.id === videoId);
+    if (mock) return { transcript: mock.transcript || "", metadata: { title: mock.title, is_mock: true } };
+
+    return {
+        transcript: `[SIMULAÇÃO DE TRANSCRIÇÃO PARA O VÍDEO ${videoId}]\n\nNeste vídeo, vamos explorar os conceitos fundamentais do tema proposto. É importante observar que a estrutura narrativa segue um padrão de gancho inicial, desenvolvimento de três pontos chaves e uma conclusão com call-to-action. (Nota: Configure a chave da Apify para extração real).`,
+        metadata: { is_mock: true, videoId }
+    };
 };

@@ -28,7 +28,7 @@ export class ReferenceService {
     /**
      * Passo 0b: Transcreve o vídeo usando Apify.
      */
-    static async transcribeReference(videoId: string, config: EngineConfig): Promise<string> {
+    static async transcribeReference(videoId: string, config: EngineConfig): Promise<{ transcript: string, metadata: any }> {
         console.log(`[Reference] Transcrevendo vídeo: ${videoId}`);
 
         // A chave da Apify é obrigatória para este passo real

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Activity, Layers, Settings, Play, StopCircle, Terminal as TerminalIcon,
   CheckCircle, Search, FileText, Loader2, X, MonitorPlay, FolderOpen,
-  RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown
+  RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap
 } from 'lucide-react';
 import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob } from './types';
 import ProfileEditor from './components/ProfileEditor';
@@ -35,62 +35,86 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'profiles' | 'settings'>('dashboard');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
-  const [config, setConfig] = useState<EngineConfig>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY_CONFIG);
-      if (saved) return { ...INITIAL_CONFIG, ...JSON.parse(saved) };
-    }
-    return INITIAL_CONFIG;
-  });
+  const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
+  const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
-  const persistenceRef = useRef<PersistenceService>(new PersistenceService(config));
+  const persistenceRef = useRef<PersistenceService>(new PersistenceService());
 
   const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('');
   const { jobs, loading: loadingJobs } = useJobMonitor(selectedProfileId);
+
+  useEffect(() => {
+    const init = async () => {
+      // 1. Carregar Configurações (Híbrido: Local + Cloud)
+      const savedConfig = await persistenceRef.current.loadEngineConfig();
+      if (savedConfig) {
+        setConfig(prev => ({ ...prev, ...savedConfig }));
+      }
+      setIsConfigLoaded(true);
+
+      // 2. Carregar Perfis e Selecionar o Primeiro
+      const savedProfiles = await persistenceRef.current.loadProfiles();
+      if (savedProfiles && savedProfiles.length > 0) {
+        setProfiles(savedProfiles);
+        setSelectedProfileId(savedProfiles[0].id);
+      }
+    };
+    init();
+  }, []);
+
+  // Sincroniza o service e o cache local quando a config muda
+  useEffect(() => {
+    persistenceRef.current.updateConfig(config);
+    localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
+    persistenceRef.current.saveEngineConfig(config);
+  }, [config]);
+
+  // Carregar prompt ativo quando o perfil mudar
+  useEffect(() => {
+    const loadActivePrompt = async () => {
+      if (!selectedProfileId) {
+        setRewritePrompt('');
+        setActivePromptId(null);
+        return;
+      }
+      const selectedProfile = profiles.find(p => p.id === selectedProfileId);
+      if (selectedProfile?.activePromptId) {
+        const prompts = await persistenceRef.current.loadChannelPrompts(selectedProfileId);
+        const active = prompts.find(p => p.id === selectedProfile.activePromptId);
+        if (active) {
+          setRewritePrompt(active.promptText);
+          setActivePromptId(active.id);
+        }
+      } else {
+        setRewritePrompt('');
+        setActivePromptId(null);
+      }
+    };
+    loadActivePrompt();
+  }, [selectedProfileId, profiles]);
+
+  // Estados de Operação
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-
-  const selectedJob = jobs.find(j => j.id === selectedJobId) || jobs[0] || null;
-  const metrics: SystemMetrics = { cpuUsage: 12, ramUsage: 34, gpuUsage: 8, activeContainers: 1, dockerStatus: 'CONNECTED', temperature: 42 };
-
-  const [themeInput, setThemeInput] = useState<string>('');
+  const [rewritePrompt, setRewritePrompt] = useState<string>('');
   const [modelChannelInput, setModelChannelInput] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSearchingChannel, setIsSearchingChannel] = useState(false);
   const [foundVideos, setFoundVideos] = useState<ReferenceVideo[]>([]);
   const [selectedRefVideo, setSelectedRefVideo] = useState<ReferenceVideo | null>(null);
+  const [referenceMetadata, setReferenceMetadata] = useState<any>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribedText, setTranscribedText] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [uptime] = useState('142H 12M');
+  const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
+  const [activePromptId, setActivePromptId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const initData = async () => {
-      // 1. Carregar Perfis
-      const loadedProfiles = await persistenceRef.current.loadProfiles();
-      if (loadedProfiles) {
-        setProfiles(loadedProfiles);
-        if (loadedProfiles.length > 0 && !selectedProfileId) {
-          setSelectedProfileId(loadedProfiles[0].id);
-        }
-      }
-
-      // 2. Carregar Configurações do Motor (incluindo chaves de API do Supabase)
-      const cloudConfig = await persistenceRef.current.loadEngineConfig();
-      if (cloudConfig) {
-        setConfig(prev => ({ ...prev, ...cloudConfig }));
-      }
-    };
-    initData();
-  }, []);
-
-  useEffect(() => {
-    persistenceRef.current.updateConfig(config);
-    // Salva no localStorage para cache rápido
-    localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
-    // Salva no Supabase para persistência duradoura (apenas quando houver mudanças)
-    persistenceRef.current.saveEngineConfig(config);
-  }, [config]);
+  const selectedJob = jobs.find(j => j.id === selectedJobId) || jobs[0] || null;
+  const metrics: SystemMetrics = {
+    cpuUsage: 12, ramUsage: 34, gpuUsage: 8, activeContainers: 1,
+    dockerStatus: 'CONNECTED', temperature: 42
+  };
 
   const handleSearchChannel = async () => {
     if (!modelChannelInput) return;
@@ -110,8 +134,9 @@ export default function App() {
     setIsModalOpen(false);
     setIsTranscribing(true);
     try {
-      const text = await transcribeVideo(video.id, config.apiKeys.apify);
-      setTranscribedText(text);
+      const result = await transcribeVideo(video.id, config.apiKeys.apify);
+      setTranscribedText(result.transcript);
+      setReferenceMetadata(result.metadata);
     } catch {
       setTranscribedText("Erro ao extrair transcrição.");
     } finally {
@@ -124,26 +149,54 @@ export default function App() {
     setTranscribedText(null);
   };
 
-  const queueJob = async () => {
-    if (!themeInput.trim() || !selectedProfileId) return;
+  const queueJob = async (status: JobStatus = JobStatus.QUEUED) => {
+    if (!selectedProfileId) return;
     try {
       const response = await fetch('/api/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           channelId: selectedProfileId,
-          theme: themeInput,
+          theme: rewritePrompt.substring(0, 50) || 'Sem Titulo',
           modelChannel: modelChannelInput,
-          referenceScript: transcribedText
+          referenceScript: transcribedText,
+          referenceMetadata: referenceMetadata,
+          appliedPromptId: activePromptId,
+          status: status
         })
       });
-      if (!response.ok) throw new Error('Falha ao criar job');
-      const newJob = await response.json();
-      setThemeInput('');
-      setSelectedJobId(newJob.id);
+
+      if (response.ok) {
+        const newJob = await response.json();
+        setRewritePrompt('');
+        setModelChannelInput('');
+        setSelectedRefVideo(null);
+        setTranscribedText(null);
+        setReferenceMetadata(null);
+        setIsTranscriptModalOpen(false);
+        setSelectedJobId(newJob.id); // Select the newly created job
+      } else {
+        throw new Error('Falha ao criar job');
+      }
     } catch (e) {
-      console.error("Erro ao enfileirar job:", e);
+      console.error('Failed to queue job:', e);
       alert("Erro ao criar job. Verifique o console.");
+    }
+  };
+
+  const startPendingJob = async (job: VideoJob) => {
+    try {
+      const response = await fetch('/api/jobs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: job.id })
+      });
+
+      if (!response.ok) throw new Error('Falha ao iniciar job');
+      // O useJobMonitor cuidará da atualização automática do status via realtime
+    } catch (e) {
+      console.error('Failed to start pending job:', e);
+      alert("Erro ao iniciar job. Verifique o console.");
     }
   };
 
@@ -176,6 +229,7 @@ export default function App() {
         videos={foundVideos}
         onSelect={handleSelectRefVideo}
       />
+
 
       {showPreview && selectedJob?.result && (
         <PreviewPlayer
@@ -260,32 +314,37 @@ export default function App() {
       {/* ========== MAIN CONTAINER ========== */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ========== SIDEBAR ========== */}
-        <aside className="w-14 border-r border-[#262626] bg-[#0a0a0a] flex flex-col shrink-0">
-          <nav className="flex-1 py-4 flex flex-col items-center gap-2">
+        {/* ========== SIDEBAR (EXPANSIVE) ========== */}
+        <aside className="w-14 border-r border-[#262626] bg-[#0a0a0a] flex flex-col shrink-0 transition-all duration-300 ease-in-out hover:w-56 group z-50">
+          <nav className="flex-1 py-4 flex flex-col gap-2 px-2">
             {[
-              { id: 'dashboard', icon: Activity, label: 'Dashboard' },
+              { id: 'dashboard', icon: Activity, label: 'Console' },
               { id: 'profiles', icon: Layers, label: 'Perfis' },
-              { id: 'settings', icon: Settings, label: 'Config' },
+              { id: 'settings', icon: Settings, label: 'Configuração' },
             ].map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id as typeof activeTab)}
-                title={item.label}
-                className={`w-10 h-10 flex items-center justify-center rounded-lg transition-all ${activeTab === item.id
-                  ? 'bg-primary/15 text-primary border-l-2 border-primary'
+                className={`w-full h-11 flex items-center gap-3 px-3 rounded-lg transition-all duration-200 overflow-hidden whitespace-nowrap ${activeTab === item.id
+                  ? 'bg-primary/15 text-primary shadow-[inset_0_0_10px_rgba(16,185,129,0.1)]'
                   : 'text-zinc-500 hover:bg-[#141414] hover:text-zinc-300'
                   }`}
               >
-                <item.icon size={18} />
+                <item.icon size={20} className="shrink-0" />
+                <span className="text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                  {item.label}
+                </span>
               </button>
             ))}
           </nav>
 
-          {/* BOTTOM ICONS */}
-          <div className="pb-4 flex flex-col items-center gap-2">
-            <button className="w-10 h-10 flex items-center justify-center rounded-lg text-zinc-600 hover:text-zinc-400 hover:bg-[#141414] transition-all">
-              <Layers size={16} />
+          {/* BOTTOM ACTIONS */}
+          <div className="pb-4 flex flex-col gap-2 px-2">
+            <button className="w-full h-11 flex items-center gap-3 px-3 rounded-lg text-zinc-600 hover:text-zinc-400 hover:bg-[#141414] transition-all overflow-hidden whitespace-nowrap">
+              <Layers size={18} className="shrink-0" />
+              <span className="text-[11px] font-mono opacity-0 group-hover:opacity-100 transition-opacity duration-300 uppercase tracking-widest">
+                Nodes
+              </span>
             </button>
           </div>
         </aside>
@@ -314,17 +373,28 @@ export default function App() {
                       </label>
                       <div className="relative">
                         <select
-                          className="w-full bg-[#141414] border border-[#262626] rounded-md px-3 py-2.5 text-sm text-zinc-200 appearance-none cursor-pointer hover:border-[#404040] focus:border-primary focus:ring-0 transition-colors"
+                          className={`w-full bg-[#141414] border ${profiles.length === 0 ? 'border-amber-500/50' : 'border-[#262626]'} rounded-md px-3 py-2.5 text-sm text-zinc-200 appearance-none cursor-pointer hover:border-[#404040] focus:border-primary focus:ring-0 transition-colors`}
                           value={selectedProfileId}
                           onChange={(e) => setSelectedProfileId(e.target.value)}
                         >
-                          <option value="">Selecione um Canal...</option>
-                          {profiles.map(p => (
-                            <option key={p.id} value={p.id}>{p.name} ({p.format})</option>
-                          ))}
+                          {profiles.length === 0 ? (
+                            <option value="">Nenhum perfil encontrado...</option>
+                          ) : (
+                            <>
+                              <option value="">Selecione um Canal...</option>
+                              {profiles.map(p => (
+                                <option key={p.id} value={p.id}>{p.name} ({p.format})</option>
+                              ))}
+                            </>
+                          )}
                         </select>
                         <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                       </div>
+                      {profiles.length === 0 && (
+                        <p className="text-[9px] text-amber-500 mt-1 uppercase font-mono tracking-tighter">
+                          ⚠️ Crie um perfil na aba 'Perfis' primeiro
+                        </p>
+                      )}
                     </div>
 
                     {/* CANAL MODELO */}
@@ -350,7 +420,10 @@ export default function App() {
 
                       {/* SELECTED VIDEO CARD */}
                       {selectedRefVideo && (
-                        <div className="mt-3 bg-[#141414] border border-[#262626] p-3 rounded-lg flex items-center gap-3 group relative">
+                        <div
+                          onClick={() => setIsTranscriptModalOpen(true)}
+                          className="mt-3 bg-[#141414] border border-[#262626] p-3 rounded-lg flex items-center gap-3 group relative transition-all cursor-pointer hover:border-primary/50 hover:bg-[#1a1a1a]"
+                        >
                           <img
                             alt="Thumbnail"
                             className="w-14 h-9 object-cover rounded bg-zinc-800"
@@ -364,90 +437,82 @@ export default function App() {
                                   <Loader2 size={8} className="animate-spin" /> Extraindo...
                                 </span>
                               ) : (
-                                <span className="text-primary flex items-center gap-1">
-                                  <FileText size={8} /> Transcrição OK
-                                </span>
+                                <div
+                                  className={`${transcribedText?.startsWith('Erro') ? 'text-red-500' : 'text-primary underline decoration-primary/30 underline-offset-4'} flex items-center gap-1 transition-all`}
+                                >
+                                  <FileText size={8} /> {transcribedText?.startsWith('Erro') ? 'Erro na Transcrição' : 'Transcrição OK (Clique para Ver)'}
+                                </div>
                               )}
                             </div>
                           </div>
                           <button
-                            onClick={clearRefVideo}
-                            className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              clearRefVideo();
+                            }}
+                            className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition shadow-lg z-10"
                           >
                             <X size={10} />
                           </button>
                         </div>
                       )}
+
                     </div>
 
-                    {/* PROMPT */}
-                    <div>
-                      <label className="block text-[10px] font-mono text-zinc-500 uppercase mb-2 tracking-wider">
-                        Conceito / Prompt
-                      </label>
-                      <textarea
-                        className="w-full h-28 bg-[#141414] border border-[#262626] rounded-md px-3 py-2.5 text-sm text-zinc-200 resize-none placeholder:text-zinc-600 hover:border-[#404040] focus:border-primary transition-colors"
-                        placeholder="Descreva o conceito do vídeo detalhadamente..."
-                        value={themeInput}
-                        onChange={(e) => setThemeInput(e.target.value)}
-                      />
+                    {/* TEMA / PROMPT REMOVIDO DAQUI E MOVIDO PARA O MODAL */}
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center border border-dashed border-[#262626] rounded-xl opacity-50 mb-8">
+                      <FileText size={40} className="text-zinc-700 mb-4" />
+                      <p className="text-xs font-mono uppercase tracking-widest text-zinc-500">
+                        O processo agora é iniciado através da revisão da transcrição do vídeo modelo.
+                      </p>
                     </div>
 
-                    {/* ACTION BUTTON */}
-                    <button
-                      onClick={queueJob}
-                      disabled={!themeInput || isTranscribing || !selectedProfileId}
-                      className="w-full bg-primary hover:bg-emerald-400 text-black font-semibold py-3 rounded-md glow-button flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                    >
-                      <Play size={14} fill="currentColor" />
-                      <span className="uppercase text-xs tracking-widest">Inicializar Job</span>
-                    </button>
-                  </div>
-
-                  {/* QUEUE STATUS */}
-                  <div className="mt-8">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-amber-500" />
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">Status da Fila</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-zinc-600">{jobs.length} TAREFAS</span>
-                    </div>
-
-                    {jobs.length === 0 ? (
-                      <div className="bg-[#141414] border border-[#262626] rounded-lg p-6 flex flex-col items-center justify-center">
-                        <div className="w-10 h-10 rounded-full bg-[#1a1a1a] flex items-center justify-center mb-3">
-                          <HardDrive size={18} className="text-zinc-600" />
+                    {/* QUEUE STATUS */}
+                    <div className="mt-8">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">Status da Fila</span>
                         </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">Sistema Ocioso</span>
+                        <span className="text-[10px] font-mono text-zinc-600">{jobs.length} TAREFAS</span>
                       </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {jobs.slice(0, 5).map(j => (
-                          <button
-                            key={j.id}
-                            onClick={() => setSelectedJobId(j.id)}
-                            className={`w-full text-left p-3 rounded-lg border transition-all ${selectedJobId === j.id
-                              ? 'bg-[#141414] border-primary'
-                              : 'bg-transparent border-[#262626] hover:bg-[#141414]'
-                              }`}
-                          >
-                            <div className="flex justify-between items-center mb-2">
-                              <span className="font-medium text-zinc-200 text-xs truncate max-w-[70%]">{j.theme}</span>
-                              <span className={`badge ${j.status === JobStatus.COMPLETED ? 'badge-success' :
-                                j.status === JobStatus.PROCESSING ? 'badge-warning' :
-                                  j.status === JobStatus.FAILED ? 'badge-error' : 'badge-info'
-                                }`}>
-                                {j.status}
-                              </span>
-                            </div>
-                            <div className="w-full bg-[#262626] h-1 rounded-full overflow-hidden">
-                              <div className="bg-primary h-full transition-all" style={{ width: `${j.progress}%` }} />
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+
+                      {jobs.length === 0 ? (
+                        <div className="bg-[#141414] border border-[#262626] rounded-lg p-6 flex flex-col items-center justify-center">
+                          <div className="w-10 h-10 rounded-full bg-[#1a1a1a] flex items-center justify-center mb-3">
+                            <HardDrive size={18} className="text-zinc-600" />
+                          </div>
+                          <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">Sistema Ocioso</span>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {jobs.slice(0, 5).map(j => (
+                            <button
+                              key={j.id}
+                              onClick={() => setSelectedJobId(j.id)}
+                              className={`w-full text-left p-3 rounded-lg border transition-all ${selectedJobId === j.id
+                                ? 'bg-[#141414] border-primary'
+                                : 'bg-transparent border-[#262626] hover:bg-[#141414]'
+                                }`}
+                            >
+                              <div className="flex justify-between items-center mb-2">
+                                <span className="font-medium text-zinc-200 text-xs truncate max-w-[70%]">{j.theme}</span>
+                                <span className={`badge ${j.status === JobStatus.COMPLETED ? 'badge-success' :
+                                  j.status === JobStatus.PROCESSING ? 'badge-warning' :
+                                    j.status === JobStatus.FAILED ? 'badge-error' :
+                                      j.status === JobStatus.PENDING ? 'bg-zinc-700 text-zinc-300' : 'badge-info'
+                                  }`}>
+                                  {j.status}
+                                </span>
+                              </div>
+                              <div className="w-full bg-[#262626] h-1 rounded-full overflow-hidden">
+                                <div className="bg-primary h-full transition-all" style={{ width: `${j.progress}%` }} />
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </section>
@@ -465,7 +530,8 @@ export default function App() {
                           <div className="flex gap-2 text-[10px] font-mono uppercase">
                             <span className={`badge ${selectedJob.status === JobStatus.PROCESSING ? 'badge-warning' :
                               selectedJob.status === JobStatus.COMPLETED ? 'badge-success' :
-                                selectedJob.status === JobStatus.FAILED ? 'badge-error' : 'badge-info'
+                                selectedJob.status === JobStatus.FAILED ? 'badge-error' :
+                                  selectedJob.status === JobStatus.PENDING ? 'bg-zinc-700 text-zinc-300' : 'badge-info'
                               }`}>
                               {selectedJob.status}
                             </span>
@@ -474,6 +540,14 @@ export default function App() {
                         </div>
 
                         <div className="flex gap-2">
+                          {selectedJob.status === JobStatus.PENDING && (
+                            <button
+                              onClick={() => startPendingJob(selectedJob)}
+                              className="bg-primary hover:bg-emerald-400 text-black px-4 py-2 rounded text-xs font-semibold flex items-center gap-2 glow-button"
+                            >
+                              <Play size={14} fill="currentColor" /> INICIAR GERAÇÃO
+                            </button>
+                          )}
                           {selectedJob.status === JobStatus.REVIEW_PENDING && (
                             <button className="bg-primary hover:bg-emerald-400 text-black px-4 py-2 rounded text-xs font-semibold flex items-center gap-2 glow-button">
                               <CheckCircle size={14} /> APROVAR
@@ -576,7 +650,12 @@ export default function App() {
           ) : activeTab === 'profiles' ? (
             <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
               <div className="max-w-6xl mx-auto">
-                <ProfileEditor profiles={profiles} onSave={handleSaveProfile} onDelete={handleDeleteProfile} />
+                <ProfileEditor
+                  persistence={persistenceRef.current}
+                  profiles={profiles}
+                  onSave={handleSaveProfile}
+                  onDelete={handleDeleteProfile}
+                />
               </div>
             </div>
           ) : (
@@ -611,6 +690,75 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* MODAL DE TRANSCRIÇÃO E REESCRITA */}
+      {isTranscriptModalOpen && transcribedText && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#0a0a0a] border border-[#262626] w-full max-w-4xl max-h-[90vh] rounded-xl overflow-hidden shadow-2xl flex flex-col scale-in-center">
+            {/* Header */}
+            <div className="p-4 border-b border-[#262626] flex items-center justify-between bg-[#0d0d0d]">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                  <FileText size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-200 uppercase tracking-wider font-mono">Revisão e Configuração de Job</h3>
+                  <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest">
+                    {transcribedText.length} CARACTERES • {selectedRefVideo?.title.substring(0, 50)}...
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsTranscriptModalOpen(false)}
+                className="p-2 hover:bg-[#1a1a1a] rounded-lg text-zinc-500 hover:text-white transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content Area - Full Width View */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="p-3 bg-[#0d0d0d] border-b border-[#262626] text-[10px] font-mono text-zinc-500 uppercase tracking-widest flex justify-between items-center">
+                <span>Script Original (Edite se necessário)</span>
+                <div className="flex items-center gap-2 text-primary/70">
+                  <Zap size={10} />
+                  <span className="text-[9px]">O prompt será aplicado automaticamente usando o perfil ativo</span>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                <textarea
+                  className="w-full h-full min-h-[50vh] bg-transparent text-zinc-300 text-sm leading-relaxed font-mono resize-none outline-none focus:ring-0"
+                  value={transcribedText}
+                  onChange={(e) => setTranscribedText(e.target.value)}
+                  placeholder="Transcrição original..."
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-[#0d0d0d] border-t border-[#262626] flex justify-between items-center">
+              <span className="text-[10px] font-mono text-zinc-600">
+                PROFILO ATIVO: {profiles.find(p => p.id === selectedProfileId)?.name}
+              </span>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setIsTranscriptModalOpen(false)}
+                  className="px-4 py-2 text-zinc-500 hover:text-white text-xs uppercase tracking-widest transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => queueJob(JobStatus.PENDING)}
+                  disabled={!selectedProfileId}
+                  className="px-6 py-2 bg-primary hover:bg-emerald-400 text-black font-bold rounded-lg text-xs uppercase tracking-widest transition-all shadow-lg shadow-primary/10 disabled:opacity-50"
+                >
+                  Confirmar e Salvar como Pendente
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
