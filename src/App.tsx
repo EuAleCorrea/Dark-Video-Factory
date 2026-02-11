@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Activity, Layers, Settings, Play, StopCircle, Terminal as TerminalIcon,
   CheckCircle, Search, FileText, Loader2, X, MonitorPlay, FolderOpen,
-  RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap
+  RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap, AlertTriangle
 } from 'lucide-react';
 import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob } from './types';
 import ProfileEditor from './components/ProfileEditor';
@@ -16,6 +16,7 @@ import VideoSelectorModal from './components/VideoSelectorModal';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
 import { useJobMonitor } from './hooks/useJobMonitor';
+import { JobQueueService } from './services/JobQueueService';
 
 const STORAGE_KEY_CONFIG = 'DARK_FACTORY_CONFIG_V1';
 
@@ -42,7 +43,23 @@ export default function App() {
 
   const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('');
-  const { jobs, loading: loadingJobs } = useJobMonitor(selectedProfileId);
+  const { jobs: remoteJobs, loading: loadingJobs } = useJobMonitor(selectedProfileId);
+  const [localJobs, setLocalJobs] = useState<VideoJob[]>([]);
+  const [ffmpegInstalled, setFfmpegInstalled] = useState<boolean | null>(null);
+
+  // Merge remote (Supabase) + local jobs
+  const jobs = [...localJobs, ...remoteJobs];
+
+  // Job update callback
+  const handleJobUpdate = useCallback((updatedJob: VideoJob) => {
+    setLocalJobs(prev => {
+      const exists = prev.some(j => j.id === updatedJob.id);
+      if (exists) return prev.map(j => j.id === updatedJob.id ? updatedJob : j);
+      return [...prev, updatedJob];
+    });
+  }, []);
+
+  const jobQueueRef = useRef<JobQueueService | null>(null);
 
   useEffect(() => {
     const init = async () => {
@@ -58,6 +75,16 @@ export default function App() {
       if (savedProfiles && savedProfiles.length > 0) {
         setProfiles(savedProfiles);
         setSelectedProfileId(savedProfiles[0].id);
+      }
+
+      // 3. Check FFmpeg
+      const tempQueue = new JobQueueService(() => { }, () => undefined, () => INITIAL_CONFIG, () => undefined);
+      const ffmpegInfo = await tempQueue.checkFfmpeg();
+      setFfmpegInstalled(ffmpegInfo.installed);
+      if (ffmpegInfo.installed) {
+        console.log(`[App] FFmpeg detectado: ${ffmpegInfo.version}`);
+      } else {
+        console.warn('[App] FFmpeg NÃO encontrado no PATH');
       }
     };
     init();
@@ -110,6 +137,16 @@ export default function App() {
   const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
   const [activePromptId, setActivePromptId] = useState<string | null>(null);
 
+  // Initialize JobQueueService when dependencies are ready
+  useEffect(() => {
+    jobQueueRef.current = new JobQueueService(
+      handleJobUpdate,
+      (channelId) => profiles.find(p => p.id === channelId),
+      () => config,
+      () => rewritePrompt || undefined,
+    );
+  }, [profiles, config, handleJobUpdate, rewritePrompt]);
+
   const selectedJob = jobs.find(j => j.id === selectedJobId) || jobs[0] || null;
   const metrics: SystemMetrics = {
     cpuUsage: 12, ramUsage: 34, gpuUsage: 8, activeContainers: 1,
@@ -152,7 +189,6 @@ export default function App() {
   const queueJob = async (status: JobStatus = JobStatus.QUEUED) => {
     if (!selectedProfileId) return;
     try {
-      // TODO: Será substituído por Tauri invoke / SQLite na Fase 3
       const newJob: VideoJob = {
         id: crypto.randomUUID(),
         channelId: selectedProfileId,
@@ -164,17 +200,26 @@ export default function App() {
         status: status,
         currentStep: PipelineStep.INIT,
         progress: 0,
-        logs: [],
+        logs: [{ timestamp: new Date().toISOString(), level: 'INFO', message: '📋 Job criado e adicionado à fila' }],
         files: []
       };
-      console.log('[App] Job criado localmente:', newJob.id);
+
+      // Add to local state immediately
+      setLocalJobs(prev => [...prev, newJob]);
+      setSelectedJobId(newJob.id);
+
+      // Enqueue for processing
+      if (status === JobStatus.QUEUED && jobQueueRef.current) {
+        jobQueueRef.current.enqueue(newJob);
+      }
+
+      console.log('[App] Job enqueued:', newJob.id);
       setRewritePrompt('');
       setModelChannelInput('');
       setSelectedRefVideo(null);
       setTranscribedText(null);
       setReferenceMetadata(null);
       setIsTranscriptModalOpen(false);
-      setSelectedJobId(newJob.id);
     } catch (e) {
       console.error('Failed to queue job:', e);
       alert("Erro ao criar job. Verifique o console.");
@@ -183,8 +228,13 @@ export default function App() {
 
   const startPendingJob = async (job: VideoJob) => {
     try {
-      // TODO: Será substituído por Tauri invoke na Fase 4 (Worker Sidecar)
-      console.log('[App] Iniciando job:', job.id);
+      if (job.status === JobStatus.REVIEW_PENDING && jobQueueRef.current) {
+        console.log('[App] Aprovando job para renderização:', job.id);
+        await jobQueueRef.current.renderJob(job);
+      } else if (job.status === JobStatus.QUEUED && jobQueueRef.current) {
+        console.log('[App] Iniciando job na fila:', job.id);
+        jobQueueRef.current.enqueue(job);
+      }
     } catch (e) {
       console.error('Failed to start pending job:', e);
       alert("Erro ao iniciar job. Verifique o console.");

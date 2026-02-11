@@ -38,6 +38,13 @@ body {
   padding: 0;
 }
 
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 /* ========================================
    NEON GLOW EFFECTS
    ======================================== */
