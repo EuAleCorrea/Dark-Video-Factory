@@ -46,3 +46,6 @@ worker/temp/
 
 # Test coverage
 coverage/
+
+# Tauri / Rust
+src-tauri/target/
