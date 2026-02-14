@@ -2,21 +2,29 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Activity, Layers, Settings, Play, StopCircle, Terminal as TerminalIcon,
   CheckCircle, Search, FileText, Loader2, X, MonitorPlay, FolderOpen,
-  RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap, AlertTriangle
+  RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap, AlertTriangle, Info,
+  Plus, LayoutGrid
 } from 'lucide-react';
-import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob } from './types';
+import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob, VideoProject, PipelineStage, PIPELINE_STAGES_ORDER } from './types';
 import ProfileEditor from './components/ProfileEditor';
 import Terminal from './components/Terminal';
 import Storyboard from './components/Storyboard';
 import AssetBrowser from './components/AssetBrowser';
 import SettingsPanel from './components/SettingsPanel';
+import { Dashboard } from './components/Dashboard';
 import DistributionPanel from './components/DistributionPanel';
 import PreviewPlayer from './components/PreviewPlayer';
 import VideoSelectorModal from './components/VideoSelectorModal';
+import KanbanBoard from './components/KanbanBoard';
+import BatchActionBar from './components/BatchActionBar';
+import StageActionModal from './components/StageActionModal';
+import TranscriptApprovalModal from './components/TranscriptApprovalModal';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
+import { ProjectService } from './services/ProjectService';
 import { useJobMonitor } from './hooks/useJobMonitor';
 import { JobQueueService } from './services/JobQueueService';
+import { PipelineExecutor } from './services/PipelineExecutor';
 
 const STORAGE_KEY_CONFIG = 'DARK_FACTORY_CONFIG_V1';
 
@@ -33,15 +41,31 @@ const INITIAL_CONFIG: EngineConfig = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'profiles' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings'>('pipeline');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
   const persistenceRef = useRef<PersistenceService>(new PersistenceService());
+  const projectServiceRef = useRef<ProjectService>(new ProjectService());
+  const pipelineExecutorRef = useRef<PipelineExecutor | null>(null);
+
+  // Pipeline Kanban state
+  const [projects, setProjects] = useState<VideoProject[]>([]);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [isStageModalOpen, setIsStageModalOpen] = useState(false);
+  const [stageModalMode, setStageModalMode] = useState<'auto' | 'manual'>('auto');
+  const [reviewProjects, setReviewProjects] = useState<VideoProject[]>([]);
 
   const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
+
+  // Refs for stable access in callbacks/services
+  const configRef = useRef(config);
+  const profilesRef = useRef(profiles);
+
+  useEffect(() => { configRef.current = config; }, [config]);
+  useEffect(() => { profilesRef.current = profiles; }, [profiles]);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('');
   const { jobs: remoteJobs, loading: loadingJobs } = useJobMonitor(selectedProfileId);
   const [localJobs, setLocalJobs] = useState<VideoJob[]>([]);
@@ -86,16 +110,30 @@ export default function App() {
       } else {
         console.warn('[App] FFmpeg NÃO encontrado no PATH');
       }
+
+      // 4. Initialize PipelineExecutor
+      pipelineExecutorRef.current = new PipelineExecutor(
+        projectServiceRef.current,
+        persistenceRef.current,
+        () => configRef.current, // Dynamic config access
+        (id) => profilesRef.current.find(p => p.id === id) // Dynamic profile access
+      );
+
+      // 5. Carregar Projetos
+      const savedProjects = await projectServiceRef.current.loadProjects();
+      setProjects(savedProjects);
     };
     init();
   }, []);
 
   // Sincroniza o service e o cache local quando a config muda
+  // GUARD: Só persiste DEPOIS que as chaves foram carregadas, para não sobrescrever com dados vazios
   useEffect(() => {
+    if (!isConfigLoaded) return;
     persistenceRef.current.updateConfig(config);
     localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
     persistenceRef.current.saveEngineConfig(config);
-  }, [config]);
+  }, [config, isConfigLoaded]);
 
   // Carregar prompt ativo quando o perfil mudar
   useEffect(() => {
@@ -135,7 +173,16 @@ export default function App() {
   const [showPreview, setShowPreview] = useState(false);
   const [uptime] = useState('142H 12M');
   const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
+  const [configAlert, setConfigAlert] = useState<{ message: string; key: string } | null>(null);
+  const configAlertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showConfigAlert = (message: string, key: string) => {
+    if (configAlertTimerRef.current) clearTimeout(configAlertTimerRef.current);
+    setConfigAlert({ message, key });
+    configAlertTimerRef.current = setTimeout(() => setConfigAlert(null), 8000);
+  };
   const [activePromptId, setActivePromptId] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   // Initialize JobQueueService when dependencies are ready
   useEffect(() => {
@@ -153,32 +200,81 @@ export default function App() {
     dockerStatus: 'CONNECTED', temperature: 42
   };
 
-  const handleSearchChannel = async () => {
-    if (!modelChannelInput) return;
+  const handleSearchChannel = async (channelName: string) => {
+    if (!channelName) return;
+
+    const apiKey = config.apiKeys.youtube;
+    if (!apiKey) {
+      showConfigAlert('A chave da YouTube Data API não está configurada. Vá em Configurações para adicioná-la.', 'youtube');
+      return;
+    }
+
     setIsSearchingChannel(true);
-    setIsModalOpen(true);
     setFoundVideos([]);
+    setSearchError(null);
+
     try {
-      const videos = await searchChannelVideos(modelChannelInput, config.apiKeys.youtube);
+      const videos = await searchChannelVideos(channelName, apiKey);
+      if (videos.length === 0) {
+        setSearchError("Nenhum vídeo encontrado. Verifique o nome do canal.");
+      }
       setFoundVideos(videos);
+      setIsModalOpen(true); // Open modal to show results/errors
+    } catch (e: any) {
+      console.error("Search failed", e);
+      setSearchError(e.message || "Erro ao buscar vídeos.");
+      setIsModalOpen(true); // Open modal to show error
     } finally {
       setIsSearchingChannel(false);
     }
   };
 
-  const handleSelectRefVideo = async (video: ReferenceVideo) => {
-    setSelectedRefVideo(video);
-    setIsModalOpen(false);
-    setIsTranscribing(true);
-    try {
-      const result = await transcribeVideo(video.id, config.apiKeys.apify);
-      setTranscribedText(result.transcript);
-      setReferenceMetadata(result.metadata);
-    } catch {
-      setTranscribedText("Erro ao extrair transcrição.");
-    } finally {
-      setIsTranscribing(false);
+  const handleSelectVideo = async (video: ReferenceVideo) => {
+    // This is for the "Old" flow (Profile Editor).
+    // The "New" flow (Pipeline) uses handleMultiSelectVideos.
+    // We need to distinguish or unify.
+    if (activeTab === 'pipeline') {
+      await handleMultiSelectVideos([video]);
+    } else {
+      // Profile Editor flow
+      setSelectedRefVideo(video);
+      setIsModalOpen(false);
+      setIsTranscribing(true);
+      try {
+        const result = await transcribeVideo(video.id, config.apiKeys.apify);
+        setTranscribedText(result.transcript);
+        setReferenceMetadata(result.metadata);
+      } catch {
+        setTranscribedText("Erro ao extrair transcrição.");
+      } finally {
+        setIsTranscribing(false);
+      }
     }
+  };
+
+  const handleMultiSelectVideos = async (videos: ReferenceVideo[]) => {
+    if (!selectedProfileId) {
+      showConfigAlert("Selecione um perfil antes de criar projetos.", 'profile');
+      return;
+    }
+
+    const newProjects = await Promise.all(videos.map(video => {
+      return projectServiceRef.current.createProject(selectedProfileId, video.title, {
+        reference: {
+          videoId: video.id,
+          videoUrl: `https://youtube.com/watch?v=${video.id}`,
+          videoTitle: video.title,
+          channelName: modelChannelInput || 'Desconhecido',
+          transcript: video.transcript,
+          thumbnailUrl: video.thumbnailUrl,
+          mode: 'auto'
+        }
+      });
+    }));
+
+    setProjects(prev => [...newProjects, ...prev]);
+    setIsModalOpen(false);
+    // Optional: Toast success
   };
 
   const clearRefVideo = () => {
@@ -188,6 +284,10 @@ export default function App() {
 
   const queueJob = async (status: JobStatus = JobStatus.QUEUED) => {
     if (!selectedProfileId) return;
+    if (status === JobStatus.QUEUED && !config.apiKeys.gemini) {
+      showConfigAlert('A chave da Gemini API não está configurada. Vá em Configurações para adicioná-la.', 'gemini');
+      return;
+    }
     try {
       const newJob: VideoJob = {
         id: crypto.randomUUID(),
@@ -241,6 +341,229 @@ export default function App() {
     }
   };
 
+  // ─── PIPELINE HANDLERS ────────────────────────────────────
+
+  const filteredProjects = selectedProfileId
+    ? projects.filter(p => p.channelId === selectedProfileId)
+    : projects;
+
+  const getSelectedProjectsStage = (): PipelineStage | null => {
+    if (selectedProjectIds.size === 0) return null;
+    const firstSelected = projects.find(p => selectedProjectIds.has(p.id));
+    return firstSelected?.currentStage || null;
+  };
+
+  const handleCreateProject = async () => {
+    if (!selectedProfileId) {
+      showConfigAlert('Selecione um perfil/canal antes de criar um projeto.', 'profile');
+      return;
+    }
+    if (!config.apiKeys.youtube) {
+      showConfigAlert('A chave da YouTube Data API não está configurada. Vá em Configurações para adicioná-la.', 'youtube');
+      return;
+    }
+    // Open YouTube search modal to pick reference videos
+    setIsSearchingChannel(false);
+    setIsModalOpen(true);
+    setFoundVideos([]);
+  };
+
+  const handleSelectRefVideoForProject = async (video: ReferenceVideo) => {
+    setIsModalOpen(false);
+    try {
+      const project = await projectServiceRef.current.createProject(
+        selectedProfileId,
+        video.title,
+        {
+          reference: {
+            videoId: video.id,
+            videoUrl: `https://youtube.com/watch?v=${video.id}`,
+            videoTitle: video.title,
+            channelName: modelChannelInput || 'Desconhecido',
+            thumbnailUrl: video.thumbnailUrl,
+            transcript: video.transcript,
+            mode: 'auto',
+          }
+        }
+      );
+      setProjects(prev => [project, ...prev]);
+    } catch (e) {
+      console.error('Failed to create project:', e);
+    }
+  };
+
+  const handleToggleProjectSelect = (id: string) => {
+    setSelectedProjectIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        // Only allow selecting projects from the same stage
+        const targetProject = projects.find(p => p.id === id);
+        if (targetProject) {
+          const currentStage = getSelectedProjectsStage();
+          if (currentStage && currentStage !== targetProject.currentStage) {
+            // Different stage - clear selection and select only this one
+            return new Set([id]);
+          }
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleProjectClick = (project: VideoProject) => {
+    // For now, toggle selection. Later: open detail panel.
+    handleToggleProjectSelect(project.id);
+  };
+
+  const handleDeleteSelectedProjects = async () => {
+    for (const id of selectedProjectIds) {
+      await projectServiceRef.current.deleteProject(id);
+    }
+    setProjects(prev => prev.filter(p => !selectedProjectIds.has(p.id)));
+    setSelectedProjectIds(new Set());
+  };
+
+  const handleDeleteProject = async (id: string) => {
+    await projectServiceRef.current.deleteProject(id);
+    setProjects(prev => prev.filter(p => p.id !== id));
+    setSelectedProjectIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const handleBatchAutoAdvance = async () => {
+    setIsStageModalOpen(false);
+    const ids = Array.from(selectedProjectIds);
+
+    // Se os projetos estão no estágio REFERENCE, busca transcrição APIFY se necessário
+    const selectedProjects = projects.filter(p => ids.includes(p.id));
+    const referenceProjects = selectedProjects.filter(p => p.currentStage === PipelineStage.REFERENCE);
+    if (referenceProjects.length > 0) {
+      // Separar projetos que já possuem transcript dos que precisam buscar via APIFY
+      const withTranscript = referenceProjects.filter(p => p.stageData.reference?.transcript);
+      const withoutTranscript = referenceProjects.filter(p => !p.stageData.reference?.transcript);
+
+      // Buscar transcrições pendentes via pipeline (APIFY)
+      if (withoutTranscript.length > 0 && pipelineExecutorRef.current) {
+        setProjects(prev => prev.map(p =>
+          withoutTranscript.some(w => w.id === p.id)
+            ? { ...p, status: 'processing' as const, errorMessage: undefined }
+            : p
+        ));
+
+        const processed: VideoProject[] = [];
+        for (const proj of withoutTranscript) {
+          try {
+            const updated = await pipelineExecutorRef.current.processProject(proj);
+            if (updated) {
+              processed.push(updated);
+              setProjects(prev => prev.map(p => p.id === updated.id ? updated : p));
+            } else {
+              const reloaded = (await projectServiceRef.current.loadProjects()).find(p => p.id === proj.id);
+              if (reloaded) {
+                processed.push(reloaded);
+                setProjects(prev => prev.map(p => p.id === reloaded.id ? reloaded : p));
+              }
+            }
+          } catch (e) {
+            console.error(`Failed to fetch transcript for ${proj.id}:`, e);
+            setProjects(prev => prev.map(p =>
+              p.id === proj.id ? { ...p, status: 'error' as const, errorMessage: String(e) } : p
+            ));
+          }
+        }
+        // Combinar projetos que agora têm transcript
+        const allReady = [...withTranscript, ...processed.filter(p => p.stageData.reference?.transcript)];
+        if (allReady.length > 0) {
+          setReviewProjects(allReady);
+        }
+      } else {
+        // Todos já possuem transcript, abrir review direto
+        setReviewProjects(referenceProjects);
+      }
+      setSelectedProjectIds(new Set());
+      return;
+    }
+
+    // Para outros estágios, segue o fluxo normal do pipeline
+    setProjects(prev => prev.map(p =>
+      ids.includes(p.id) ? { ...p, status: 'processing' as const, errorMessage: undefined } : p
+    ));
+
+    if (!pipelineExecutorRef.current) {
+      console.error("PipelineExecutor not initialized");
+      return;
+    }
+
+    for (const id of ids) {
+      const project = projects.find(p => p.id === id);
+      if (project) {
+        try {
+          const updated = await pipelineExecutorRef.current.processProject(project);
+          if (updated) {
+            setProjects(prev => prev.map(p => p.id === id ? updated : p));
+          } else {
+            const reloaded = (await projectServiceRef.current.loadProjects()).find(p => p.id === id);
+            if (reloaded) setProjects(prev => prev.map(p => p.id === id ? reloaded : p));
+          }
+        } catch (e) {
+          console.error(`Failed to advance project ${id}:`, e);
+          setProjects(prev => prev.map(p => p.id === id ? { ...p, status: 'error' as const, errorMessage: String(e) } : p));
+        }
+      }
+    }
+    setSelectedProjectIds(new Set());
+  };
+
+  const handleBatchManualAdvance = async (input: string | File) => {
+    setIsStageModalOpen(false);
+    const ids = Array.from(selectedProjectIds);
+    const currentStage = getSelectedProjectsStage();
+    if (!currentStage) return;
+
+    const nextIdx = PIPELINE_STAGES_ORDER.indexOf(currentStage) + 1;
+    const nextStage = PIPELINE_STAGES_ORDER[nextIdx];
+    if (!nextStage) return;
+
+    for (const id of ids) {
+      const project = projects.find(p => p.id === id);
+      if (project) {
+        try {
+          // Build stage data based on what the next stage expects
+          const stageData: Record<string, unknown> = {};
+          if (typeof input === 'string') {
+            if (nextStage === PipelineStage.SCRIPT) {
+              stageData.script = { text: input, wordCount: input.split(/\s+/).length, mode: 'manual' };
+            } else if (nextStage === PipelineStage.SUBTITLES) {
+              stageData.subtitles = { srtContent: input, mode: 'manual' };
+            } else {
+              stageData[nextStage] = { content: input, mode: 'manual' };
+            }
+          } else {
+            // File — store URL (would need upload to Supabase storage in real implementation)
+            const fileUrl = URL.createObjectURL(input);
+            if (nextStage === PipelineStage.AUDIO) {
+              stageData.audio = { fileUrl, mode: 'manual' };
+            } else if (nextStage === PipelineStage.AUDIO_COMPRESS) {
+              stageData.audio_compress = { fileUrl, mode: 'manual' };
+            } else if (nextStage === PipelineStage.VIDEO) {
+              stageData.video = { fileUrl, mode: 'manual' };
+            } else if (nextStage === PipelineStage.THUMBNAIL) {
+              stageData.thumbnail = { imageUrl: fileUrl, mode: 'manual' };
+            }
+          }
+
+          const updated = await projectServiceRef.current.advanceStage(project, stageData);
+          setProjects(prev => prev.map(p => p.id === id ? updated : p));
+        } catch (e) {
+          console.error(`Failed to manually advance project ${id}:`, e);
+        }
+      }
+    }
+    setSelectedProjectIds(new Set());
+  };
+
   const handleSaveProfile = async (newProfile: ChannelProfile) => {
     setProfiles(prev => {
       const exists = prev.some(p => p.id === newProfile.id);
@@ -268,7 +591,10 @@ export default function App() {
         isLoading={isSearchingChannel}
         channelName={modelChannelInput}
         videos={foundVideos}
-        onSelect={handleSelectRefVideo}
+        onSelect={handleSelectVideo}
+        onMultiSelect={activeTab === 'pipeline' ? handleMultiSelectVideos : undefined}
+        error={searchError}
+        onSearch={handleSearchChannel}
       />
 
 
@@ -283,71 +609,69 @@ export default function App() {
       )}
 
       {/* ========== HEADER ========== */}
-      <header className="h-12 border-b border-[#262626] flex items-center justify-between px-4 bg-[#0a0a0a] z-50 shrink-0">
-        <div className="flex items-center gap-6">
+      <header className="h-14 border-b border-[#E2E8F0] flex items-center justify-between px-5 bg-white/80 backdrop-blur-xl z-50 shrink-0">
+        <div className="flex items-center gap-5">
           {/* LOGO */}
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-primary rounded flex items-center justify-center">
-              <Activity className="text-black w-4 h-4" strokeWidth={2.5} />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+              <Activity className="text-white w-5 h-5" strokeWidth={2.5} />
             </div>
-            <span className="font-semibold text-white tracking-tight">
-              DARK FACTORY <span className="text-[10px] text-primary font-mono ml-1">V2.1</span>
+            <span className="font-semibold text-[#0F172A] tracking-tight text-lg">
+              Dark Factory <span className="text-sm text-primary/70 ml-1">v2.1</span>
             </span>
           </div>
 
-          <div className="h-5 w-px bg-[#262626]" />
+          <div className="h-6 w-px bg-[#E2E8F0]" />
 
           {/* SYSTEM STATUS */}
-          <div className="flex items-center gap-4 text-[11px] font-mono">
+          <div className="flex items-center gap-3 text-base">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-primary status-pulse" />
-              <span className="text-primary font-medium tracking-wider">SYSTEM ONLINE</span>
+              <span className="w-2.5 h-2.5 rounded-full bg-primary status-pulse" />
+              <span className="text-primary font-medium">Online</span>
             </div>
-            <span className="text-zinc-500">UPTIME: {uptime}</span>
+            <span className="text-[#94A3B8] text-sm">{uptime}</span>
           </div>
 
-          <div className="h-5 w-px bg-[#262626]" />
+          <div className="h-6 w-px bg-[#E2E8F0]" />
 
           {/* METRICS */}
-          <div className="hidden lg:flex items-center gap-4 text-[10px] font-mono text-zinc-400">
-            <div className="flex items-center gap-1.5">
-              <span className="text-cyan-400">CPU</span>
-              <span className="text-zinc-500">NÚCLEO</span>
-              <div className="w-12 h-1 bg-[#262626] rounded-full overflow-hidden">
-                <div className="h-full bg-cyan-400" style={{ width: `${metrics.cpuUsage}%` }} />
+          <div className="hidden lg:flex items-center gap-5 text-sm text-[#64748B]">
+            <div className="flex items-center gap-2">
+              <span className="text-[#3B82F6] text-sm font-medium">CPU</span>
+              <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                <div className="h-full bg-[#3B82F6] rounded-full transition-all" style={{ width: `${metrics.cpuUsage}%` }} />
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-purple-400">GPU</span>
-              <span className="text-zinc-500">CLUSTER</span>
-              <div className="w-12 h-1 bg-[#262626] rounded-full overflow-hidden">
-                <div className="h-full bg-purple-400" style={{ width: `${metrics.gpuUsage}%` }} />
+            <div className="flex items-center gap-2">
+              <span className="text-[#8B5CF6] text-sm font-medium">GPU</span>
+              <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                <div className="h-full bg-[#8B5CF6] rounded-full transition-all" style={{ width: `${metrics.gpuUsage}%` }} />
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-amber-400">MEMÓRIA</span>
-              <div className="w-12 h-1 bg-[#262626] rounded-full overflow-hidden">
-                <div className="h-full bg-amber-400" style={{ width: `${metrics.ramUsage}%` }} />
+            <div className="flex items-center gap-2">
+              <span className="text-[#F59E0B] text-sm font-medium">RAM</span>
+              <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                <div className="h-full bg-[#F59E0B] rounded-full transition-all" style={{ width: `${metrics.ramUsage}%` }} />
               </div>
             </div>
           </div>
         </div>
 
         {/* RIGHT SIDE */}
-        <div className="flex items-center gap-4 text-[10px] font-mono text-zinc-400">
-          <div className="hidden md:flex items-center gap-1">
-            <HardDrive size={12} />
-            <span>NÓS: {metrics.activeContainers}</span>
+        <div className="flex items-center gap-4 text-base text-[#64748B]">
+          <div className="hidden md:flex items-center gap-2">
+            <HardDrive size={16} />
+            <span>Nós: {metrics.activeContainers}</span>
           </div>
-          <div className="hidden md:flex items-center gap-1 text-primary">
-            <Thermometer size={12} />
-            <span>TÉRMICO: {metrics.temperature}°C</span>
+          <div className="hidden md:flex items-center gap-2">
+            <Thermometer size={16} />
+            <span>{metrics.temperature}°C</span>
           </div>
           <button
             onClick={() => setActiveTab('settings')}
-            className="p-2 hover:bg-[#262626] rounded transition-colors text-zinc-400 hover:text-white"
+            className="p-2.5 hover:bg-[#F1F5F9] rounded-xl transition-colors text-[#64748B] hover:text-[#0F172A]"
           >
-            <Settings size={16} />
+            <Settings size={20} />
           </button>
         </div>
       </header>
@@ -355,24 +679,25 @@ export default function App() {
       {/* ========== MAIN CONTAINER ========== */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ========== SIDEBAR (EXPANSIVE) ========== */}
-        <aside className="w-14 border-r border-[#262626] bg-[#0a0a0a] flex flex-col shrink-0 transition-all duration-300 ease-in-out hover:w-56 group z-50">
-          <nav className="flex-1 py-4 flex flex-col gap-2 px-2">
+        {/* ========== SIDEBAR (FIXED) ========== */}
+        <aside className="w-64 border-r border-[#E2E8F0] bg-white flex flex-col shrink-0 z-50">
+          <nav className="flex-1 py-5 flex flex-col gap-1.5 px-4">
             {[
-              { id: 'dashboard', icon: Activity, label: 'Console' },
+              { id: 'pipeline', icon: LayoutGrid, label: 'Pipeline' },
+              { id: 'dashboard', icon: Activity, label: 'Dashboard' },
               { id: 'profiles', icon: Layers, label: 'Perfis' },
               { id: 'settings', icon: Settings, label: 'Configuração' },
             ].map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id as typeof activeTab)}
-                className={`w-full h-11 flex items-center gap-3 px-3 rounded-lg transition-all duration-200 overflow-hidden whitespace-nowrap ${activeTab === item.id
-                  ? 'bg-primary/15 text-primary shadow-[inset_0_0_10px_rgba(16,185,129,0.1)]'
-                  : 'text-zinc-500 hover:bg-[#141414] hover:text-zinc-300'
+                className={`w-full h-12 flex items-center gap-3 px-4 rounded-xl transition-all duration-200 ${activeTab === item.id
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
                   }`}
               >
                 <item.icon size={20} className="shrink-0" />
-                <span className="text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span className="text-base font-medium">
                   {item.label}
                 </span>
               </button>
@@ -380,320 +705,166 @@ export default function App() {
           </nav>
 
           {/* BOTTOM ACTIONS */}
-          <div className="pb-4 flex flex-col gap-2 px-2">
-            <button className="w-full h-11 flex items-center gap-3 px-3 rounded-lg text-zinc-600 hover:text-zinc-400 hover:bg-[#141414] transition-all overflow-hidden whitespace-nowrap">
-              <Layers size={18} className="shrink-0" />
-              <span className="text-[11px] font-mono opacity-0 group-hover:opacity-100 transition-opacity duration-300 uppercase tracking-widest">
-                Nodes
-              </span>
+          <div className="pb-5 flex flex-col gap-1.5 px-4">
+            <button
+              onClick={handleCreateProject}
+              className="w-full h-12 flex items-center gap-3 px-4 rounded-xl text-primary bg-primary/5 hover:bg-primary/10 transition-all font-medium text-base"
+            >
+              <Plus size={20} className="shrink-0" />
+              Novo Projeto
             </button>
           </div>
         </aside>
 
         {/* ========== WORKSPACE ========== */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-[#0a0a0a]">
-          {activeTab === 'dashboard' ? (
-            <div className="flex-1 flex overflow-hidden">
-
-              {/* LEFT PANEL - NOVA OPERAÇÃO */}
-              <section className="w-80 border-r border-[#262626] bg-[#0a0a0a] flex flex-col shrink-0">
-                <div className="p-5 flex-1 overflow-y-auto custom-scrollbar">
-                  {/* HEADER */}
-                  <div className="flex items-center gap-2 mb-6">
-                    <RefreshCw size={14} className={`text-primary ${loadingJobs ? 'animate-spin' : ''}`} />
-                    <h2 className="text-xs font-mono font-semibold tracking-widest text-zinc-300 uppercase">
-                      Nova Operação
-                    </h2>
-                  </div>
-
-                  <div className="space-y-5">
-                    {/* CANAL ALVO */}
-                    <div>
-                      <label className="block text-[10px] font-mono text-zinc-500 uppercase mb-2 tracking-wider">
-                        Canal Alvo
-                      </label>
-                      <div className="relative">
-                        <select
-                          className={`w-full bg-[#141414] border ${profiles.length === 0 ? 'border-amber-500/50' : 'border-[#262626]'} rounded-md px-3 py-2.5 text-sm text-zinc-200 appearance-none cursor-pointer hover:border-[#404040] focus:border-primary focus:ring-0 transition-colors`}
-                          value={selectedProfileId}
-                          onChange={(e) => setSelectedProfileId(e.target.value)}
-                        >
-                          {profiles.length === 0 ? (
-                            <option value="">Nenhum perfil encontrado...</option>
-                          ) : (
-                            <>
-                              <option value="">Selecione um Canal...</option>
-                              {profiles.map(p => (
-                                <option key={p.id} value={p.id}>{p.name} ({p.format})</option>
-                              ))}
-                            </>
-                          )}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
-                      </div>
-                      {profiles.length === 0 && (
-                        <p className="text-[9px] text-amber-500 mt-1 uppercase font-mono tracking-tighter">
-                          ⚠️ Crie um perfil na aba 'Perfis' primeiro
-                        </p>
-                      )}
-                    </div>
-
-                    {/* CANAL MODELO */}
-                    <div>
-                      <label className="block text-[10px] font-mono text-zinc-500 uppercase mb-2 tracking-wider">
-                        Canal Modelo (Opcional)
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          className="flex-1 bg-[#141414] border border-[#262626] rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 hover:border-[#404040] focus:border-primary transition-colors"
-                          placeholder="@CanalModelo"
-                          value={modelChannelInput}
-                          onChange={(e) => setModelChannelInput(e.target.value)}
-                        />
-                        <button
-                          onClick={handleSearchChannel}
-                          disabled={isSearchingChannel || !modelChannelInput}
-                          className="bg-[#141414] border border-[#262626] p-2.5 rounded-md hover:bg-[#1a1a1a] hover:border-[#404040] text-zinc-400 disabled:opacity-50 transition-all"
-                        >
-                          {isSearchingChannel ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                        </button>
-                      </div>
-
-                      {/* SELECTED VIDEO CARD */}
-                      {selectedRefVideo && (
-                        <div
-                          onClick={() => setIsTranscriptModalOpen(true)}
-                          className="mt-3 bg-[#141414] border border-[#262626] p-3 rounded-lg flex items-center gap-3 group relative transition-all cursor-pointer hover:border-primary/50 hover:bg-[#1a1a1a]"
-                        >
-                          <img
-                            alt="Thumbnail"
-                            className="w-14 h-9 object-cover rounded bg-zinc-800"
-                            src={selectedRefVideo.thumbnailUrl}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-xs font-medium line-clamp-1 text-zinc-300">{selectedRefVideo.title}</h4>
-                            <div className="text-[10px] text-zinc-500 font-mono mt-1">
-                              {isTranscribing ? (
-                                <span className="text-amber-500 flex items-center gap-1">
-                                  <Loader2 size={8} className="animate-spin" /> Extraindo...
-                                </span>
-                              ) : (
-                                <div
-                                  className={`${transcribedText?.startsWith('Erro') ? 'text-red-500' : 'text-primary underline decoration-primary/30 underline-offset-4'} flex items-center gap-1 transition-all`}
-                                >
-                                  <FileText size={8} /> {transcribedText?.startsWith('Erro') ? 'Erro na Transcrição' : 'Transcrição OK (Clique para Ver)'}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              clearRefVideo();
-                            }}
-                            className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition shadow-lg z-10"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      )}
-
-                    </div>
-
-                    {/* TEMA / PROMPT REMOVIDO DAQUI E MOVIDO PARA O MODAL */}
-                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center border border-dashed border-[#262626] rounded-xl opacity-50 mb-8">
-                      <FileText size={40} className="text-zinc-700 mb-4" />
-                      <p className="text-xs font-mono uppercase tracking-widest text-zinc-500">
-                        O processo agora é iniciado através da revisão da transcrição do vídeo modelo.
-                      </p>
-                    </div>
-
-                    {/* QUEUE STATUS */}
-                    <div className="mt-8">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-amber-500" />
-                          <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">Status da Fila</span>
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-600">{jobs.length} TAREFAS</span>
-                      </div>
-
-                      {jobs.length === 0 ? (
-                        <div className="bg-[#141414] border border-[#262626] rounded-lg p-6 flex flex-col items-center justify-center">
-                          <div className="w-10 h-10 rounded-full bg-[#1a1a1a] flex items-center justify-center mb-3">
-                            <HardDrive size={18} className="text-zinc-600" />
-                          </div>
-                          <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">Sistema Ocioso</span>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {jobs.slice(0, 5).map(j => (
-                            <button
-                              key={j.id}
-                              onClick={() => setSelectedJobId(j.id)}
-                              className={`w-full text-left p-3 rounded-lg border transition-all ${selectedJobId === j.id
-                                ? 'bg-[#141414] border-primary'
-                                : 'bg-transparent border-[#262626] hover:bg-[#141414]'
-                                }`}
-                            >
-                              <div className="flex justify-between items-center mb-2">
-                                <span className="font-medium text-zinc-200 text-xs truncate max-w-[70%]">{j.theme}</span>
-                                <span className={`badge ${j.status === JobStatus.COMPLETED ? 'badge-success' :
-                                  j.status === JobStatus.PROCESSING ? 'badge-warning' :
-                                    j.status === JobStatus.FAILED ? 'badge-error' :
-                                      j.status === JobStatus.PENDING ? 'bg-zinc-700 text-zinc-300' : 'badge-info'
-                                  }`}>
-                                  {j.status}
-                                </span>
-                              </div>
-                              <div className="w-full bg-[#262626] h-1 rounded-full overflow-hidden">
-                                <div className="bg-primary h-full transition-all" style={{ width: `${j.progress}%` }} />
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+        <main className="flex-1 flex flex-col overflow-hidden bg-[#F8FAFC]">
+          {activeTab === 'pipeline' ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Pipeline Header */}
+              <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] shrink-0">
+                <div className="flex items-center gap-3">
+                  <LayoutGrid size={20} className="text-primary" />
+                  <h2 className="text-base font-semibold text-[#0F172A]">Pipeline de Produção</h2>
+                  <span className="text-sm text-[#94A3B8] bg-[#F1F5F9] px-3 py-1 rounded-lg">
+                    {projects.length} projetos
+                  </span>
                 </div>
-              </section>
-
-              {/* RIGHT PANEL - PREVIEW */}
-              <section className="flex-1 flex flex-col overflow-hidden">
-                {/* MAIN PREVIEW AREA */}
-                <div className="flex-1 grid-bg relative overflow-hidden">
-                  {selectedJob ? (
-                    <div className="absolute inset-0 flex flex-col p-6 overflow-y-auto custom-scrollbar">
-                      {/* JOB HEADER */}
-                      <div className="flex justify-between items-start mb-6 shrink-0">
-                        <div>
-                          <h2 className="text-lg font-semibold text-white mb-2">{selectedJob.theme}</h2>
-                          <div className="flex gap-2 text-[10px] font-mono uppercase">
-                            <span className={`badge ${selectedJob.status === JobStatus.PROCESSING ? 'badge-warning' :
-                              selectedJob.status === JobStatus.COMPLETED ? 'badge-success' :
-                                selectedJob.status === JobStatus.FAILED ? 'badge-error' :
-                                  selectedJob.status === JobStatus.PENDING ? 'bg-zinc-700 text-zinc-300' : 'badge-info'
-                              }`}>
-                              {selectedJob.status}
-                            </span>
-                            <span className="badge bg-[#262626] text-zinc-400">STEP: {selectedJob.currentStep}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2">
-                          {selectedJob.status === JobStatus.PENDING && (
-                            <button
-                              onClick={() => startPendingJob(selectedJob)}
-                              className="bg-primary hover:bg-emerald-400 text-black px-4 py-2 rounded text-xs font-semibold flex items-center gap-2 glow-button"
-                            >
-                              <Play size={14} fill="currentColor" /> INICIAR GERAÇÃO
-                            </button>
-                          )}
-                          {selectedJob.status === JobStatus.REVIEW_PENDING && (
-                            <button className="bg-primary hover:bg-emerald-400 text-black px-4 py-2 rounded text-xs font-semibold flex items-center gap-2 glow-button">
-                              <CheckCircle size={14} /> APROVAR
-                            </button>
-                          )}
-                          {selectedJob.status === JobStatus.FAILED && (
-                            <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-xs font-semibold flex items-center gap-2">
-                              <RefreshCw size={14} /> RETRY
-                            </button>
-                          )}
-                          {(selectedJob.status === JobStatus.PROCESSING || selectedJob.status === JobStatus.QUEUED) && (
-                            <button className="bg-red-900/50 hover:bg-red-900 text-red-200 px-4 py-2 rounded text-xs font-semibold flex items-center gap-2 border border-red-900/50">
-                              <StopCircle size={14} /> ABORT
-                            </button>
-                          )}
-                          {selectedJob.status === JobStatus.COMPLETED && (
-                            <button
-                              onClick={() => setShowPreview(true)}
-                              className="bg-[#262626] hover:bg-[#363636] text-white px-4 py-2 rounded text-xs font-semibold flex items-center gap-2 border border-[#404040]"
-                            >
-                              <MonitorPlay size={14} /> PREVIEW
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* CONTENT */}
-                      <div className="flex-1">
-                        {selectedJob.status === JobStatus.COMPLETED && <DistributionPanel job={selectedJob} />}
-                        {selectedJob.result?.storyboard ? (
-                          <Storyboard
-                            segments={selectedJob.result.storyboard}
-                            isEditable={selectedJob.status === JobStatus.REVIEW_PENDING}
-                            onUpdate={() => { }}
-                            onSplit={() => { }}
-                            onDelete={() => { }}
-                            onRegenerate={() => { }}
-                          />
-                        ) : (
-                          <div className="h-64 flex flex-col items-center justify-center border border-dashed border-[#262626] rounded-lg">
-                            <Loader2 size={28} className="text-zinc-700 animate-spin mb-4" />
-                            <span className="text-zinc-500 text-xs font-mono uppercase tracking-wider">
-                              Aguardando geração de conteúdo...
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <MonitorPlay className="w-16 h-16 mb-4 text-zinc-800" strokeWidth={1} />
-                      <p className="font-mono text-xs uppercase tracking-[0.2em] text-zinc-600">
-                        Selecione um Job Ativo para Monitorar
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* BOTTOM DOCK */}
-                <div className="h-48 border-t border-[#262626] bg-[#0a0a0a] flex flex-col shrink-0">
-                  {/* TABS */}
-                  <div className="flex border-b border-[#262626]">
-                    <button
-                      onClick={() => setMonitorTab('terminal')}
-                      className={`px-5 py-2.5 text-[10px] font-mono font-semibold uppercase tracking-wider flex items-center gap-2 border-b-2 transition-colors ${monitorTab === 'terminal'
-                        ? 'border-primary text-zinc-200'
-                        : 'border-transparent text-zinc-600 hover:text-zinc-400'
-                        }`}
+                <div className="flex items-center gap-3">
+                  {/* Profile Selector */}
+                  <div className="relative">
+                    <select
+                      className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-2.5 text-sm text-[#0F172A] appearance-none cursor-pointer hover:border-[#CBD5E1] pr-8 transition-colors"
+                      value={selectedProfileId}
+                      onChange={(e) => setSelectedProfileId(e.target.value)}
                     >
-                      <TerminalIcon size={12} /> Logs de Sistema
-                    </button>
-                    <button
-                      onClick={() => setMonitorTab('assets')}
-                      className={`px-5 py-2.5 text-[10px] font-mono font-semibold uppercase tracking-wider flex items-center gap-2 border-b-2 transition-colors ${monitorTab === 'assets'
-                        ? 'border-primary text-zinc-200'
-                        : 'border-transparent text-zinc-600 hover:text-zinc-400'
-                        }`}
-                    >
-                      <FolderOpen size={12} /> Sistema de Arquivos
-                    </button>
+                      <option value="">Todos os Canais</option>
+                      {profiles.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
                   </div>
-
-                  {/* DOCK CONTENT */}
-                  <div className="flex-1 bg-[#0a0a0a] overflow-hidden">
-                    {selectedJob ? (
-                      monitorTab === 'terminal' ? (
-                        <Terminal logs={selectedJob.logs} className="h-full" />
-                      ) : (
-                        <AssetBrowser jobId={selectedJob.id} files={selectedJob.files || []} className="h-full border-0 rounded-none bg-transparent" />
-                      )
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-zinc-600 font-mono text-[10px] tracking-wider">
-                        // AGUARDANDO SELEÇÃO DE CONTEXTO
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    onClick={handleCreateProject}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:opacity-90 transition-all"
+                  >
+                    <Plus size={16} />
+                    Novo Projeto
+                  </button>
                 </div>
-              </section>
+              </div>
+
+              {/* Kanban Board */}
+              {/* Kanban Board */}
+              <KanbanBoard
+                projects={filteredProjects}
+                selectedIds={selectedProjectIds}
+                onToggleSelect={handleToggleProjectSelect}
+                onProjectClick={handleProjectClick}
+                onDeleteProject={handleDeleteProject}
+                onDragEnd={async (result) => {
+                  const { destination, source, draggableId } = result;
+
+                  if (!destination) return;
+
+                  if (
+                    destination.droppableId === source.droppableId &&
+                    destination.index === source.index
+                  ) {
+                    return;
+                  }
+
+                  const project = projects.find(p => p.id === draggableId);
+                  if (!project) return;
+
+                  const newStage = destination.droppableId as PipelineStage;
+
+                  // Optimistic update
+                  setProjects(prev => prev.map(p =>
+                    p.id === draggableId
+                      ? { ...p, currentStage: newStage }
+                      : p
+                  ));
+
+                  try {
+                    await projectServiceRef.current.updateProject(project.id, { currentStage: newStage });
+                  } catch (e) {
+                    console.error('Failed to move project:', e);
+                    // Revert on error
+                    setProjects(prev => prev.map(p =>
+                      p.id === draggableId
+                        ? { ...p, currentStage: project.currentStage }
+                        : p
+                    ));
+                    alert("Erro ao mover projeto. Tente novamente.");
+                  }
+                }}
+              />
+
+              {/* Batch Action Bar */}
+              <BatchActionBar
+                selectedCount={selectedProjectIds.size}
+                selectedStage={getSelectedProjectsStage()}
+                onAdvanceAuto={() => { setStageModalMode('auto'); setIsStageModalOpen(true); }}
+                onAdvanceManual={() => { setStageModalMode('manual'); setIsStageModalOpen(true); }}
+                onDelete={handleDeleteSelectedProjects}
+                onClearSelection={() => setSelectedProjectIds(new Set())}
+              />
+
+              {/* Stage Action Modal */}
+              <StageActionModal
+                isOpen={isStageModalOpen}
+                onClose={() => setIsStageModalOpen(false)}
+                currentStage={getSelectedProjectsStage() || PipelineStage.REFERENCE}
+                projectCount={selectedProjectIds.size}
+                onSubmitAuto={handleBatchAutoAdvance}
+                onSubmitManual={handleBatchManualAdvance}
+              />
+
+              {/* Transcript Approval Modal (Batch) */}
+              {reviewProjects.length > 0 && (
+                <TranscriptApprovalModal
+                  projects={reviewProjects}
+                  config={config}
+                  onApproveAll={async (results) => {
+                    for (const { project: p, transcript, metadata } of results) {
+                      // Monta o reference com TODOS os dados da APIFY
+                      const enrichedReference = {
+                        ...p.stageData.reference!,
+                        transcript,
+                        // Metadados extras da APIFY
+                        description: metadata?.description,
+                        viewCount: metadata?.viewCount,
+                        publishedAt: metadata?.date,
+                        duration: metadata?.duration,
+                        // Atualiza título/canal se a APIFY trouxer dados mais precisos
+                        ...(metadata?.channelName && { channelName: metadata.channelName }),
+                        ...(metadata?.title && { videoTitle: metadata.title }),
+                      };
+
+                      await projectServiceRef.current.updateProject(p.id, {
+                        stageData: { ...p.stageData, reference: enrichedReference }
+                      });
+                      const updatedProject = { ...p, stageData: { ...p.stageData, reference: enrichedReference } };
+                      const advanced = await projectServiceRef.current.advanceStage(updatedProject, {});
+                      setProjects(prev => prev.map(pr => pr.id === p.id ? advanced : pr));
+                    }
+                    setReviewProjects([]);
+                  }}
+                  onReject={() => setReviewProjects([])}
+                  onClose={() => setReviewProjects([])}
+                />
+              )}
             </div>
+          ) : activeTab === 'dashboard' ? (
+            <Dashboard projects={projects} profiles={profiles} />
           ) : activeTab === 'profiles' ? (
             <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
               <div className="max-w-6xl mx-auto">
                 <ProfileEditor
                   persistence={persistenceRef.current}
                   profiles={profiles}
+                  config={config}
                   onSave={handleSaveProfile}
                   onDelete={handleDeleteProfile}
                 />
@@ -708,45 +879,44 @@ export default function App() {
       </div>
 
       {/* ========== FOOTER ========== */}
-      <footer className="h-8 border-t border-[#262626] bg-[#0a0a0a] px-4 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4 text-[10px] font-mono text-zinc-600">
-          {/* Can add breadcrumbs or path here */}
+      <footer className="h-10 border-t border-[#E2E8F0] bg-white px-6 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-4 text-sm text-[#94A3B8]">
+          {/* Breadcrumbs */}
         </div>
-        <div className="flex items-center gap-4 text-[10px] font-mono text-zinc-500">
-          <button className="hover:text-zinc-300 transition-colors">
-            <RefreshCw size={12} />
+        <div className="flex items-center gap-4 text-sm text-[#94A3B8]">
+          <button className="hover:text-[#64748B] transition-colors">
+            <RefreshCw size={14} />
           </button>
-          <button className="hover:text-zinc-300 transition-colors">
-            <Wifi size={12} />
+          <button className="hover:text-[#64748B] transition-colors">
+            <Wifi size={14} />
           </button>
-          <div className="flex items-center gap-1.5">
-            <Cloud size={12} className="text-primary" />
-            <span className="text-primary">CLOUD:</span>
-            <span className="text-zinc-400">LOCAL</span>
+          <div className="flex items-center gap-2">
+            <Cloud size={14} className="text-primary/70" />
+            <span className="text-[#64748B]">Local</span>
           </div>
         </div>
       </footer>
 
       {/* MODAL DE TRANSCRIÇÃO E REESCRITA */}
       {isTranscriptModalOpen && transcribedText && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0a0a0a] border border-[#262626] w-full max-w-4xl max-h-[90vh] rounded-xl overflow-hidden shadow-2xl flex flex-col scale-in-center">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white border border-[#E2E8F0] w-full max-w-4xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col scale-in-center">
             {/* Header */}
-            <div className="p-4 border-b border-[#262626] flex items-center justify-between bg-[#0d0d0d]">
+            <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-white">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                <div className="p-2 bg-primary/10 rounded-xl text-primary">
                   <FileText size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-zinc-200 uppercase tracking-wider font-mono">Revisão e Configuração de Job</h3>
-                  <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest">
-                    {transcribedText.length} CARACTERES • {selectedRefVideo?.title.substring(0, 50)}...
+                  <h3 className="text-base font-semibold text-[#0F172A]">Revisão e Configuração de Job</h3>
+                  <p className="text-sm text-[#94A3B8]">
+                    {transcribedText.length} caracteres • {selectedRefVideo?.title.substring(0, 50)}...
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setIsTranscriptModalOpen(false)}
-                className="p-2 hover:bg-[#1a1a1a] rounded-lg text-zinc-500 hover:text-white transition-colors"
+                className="p-2 hover:bg-[#F1F5F9] rounded-xl text-[#64748B] hover:text-[#0F172A] transition-colors"
               >
                 <X size={20} />
               </button>
@@ -754,16 +924,16 @@ export default function App() {
 
             {/* Content Area - Full Width View */}
             <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="p-3 bg-[#0d0d0d] border-b border-[#262626] text-[10px] font-mono text-zinc-500 uppercase tracking-widest flex justify-between items-center">
+              <div className="p-3 bg-[#F8FAFC] border-b border-[#E2E8F0] text-sm text-[#64748B] flex justify-between items-center">
                 <span>Script Original (Edite se necessário)</span>
-                <div className="flex items-center gap-2 text-primary/70">
-                  <Zap size={10} />
-                  <span className="text-[9px]">O prompt será aplicado automaticamente usando o perfil ativo</span>
+                <div className="flex items-center gap-2 text-primary/60">
+                  <Zap size={12} />
+                  <span className="text-sm">Prompt aplicado com perfil ativo</span>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                 <textarea
-                  className="w-full h-full min-h-[50vh] bg-transparent text-zinc-300 text-sm leading-relaxed font-mono resize-none outline-none focus:ring-0"
+                  className="w-full h-full min-h-[50vh] bg-transparent text-[#0F172A] text-sm leading-relaxed font-mono resize-none outline-none focus:ring-0"
                   value={transcribedText}
                   onChange={(e) => setTranscribedText(e.target.value)}
                   placeholder="Transcrição original..."
@@ -772,26 +942,50 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-[#0d0d0d] border-t border-[#262626] flex justify-between items-center">
-              <span className="text-[10px] font-mono text-zinc-600">
-                PROFILO ATIVO: {profiles.find(p => p.id === selectedProfileId)?.name}
+            <div className="p-4 bg-white border-t border-[#E2E8F0] flex justify-between items-center">
+              <span className="text-sm text-[#94A3B8]">
+                Perfil ativo: {profiles.find(p => p.id === selectedProfileId)?.name}
               </span>
               <div className="flex gap-3">
                 <button
                   onClick={() => setIsTranscriptModalOpen(false)}
-                  className="px-4 py-2 text-zinc-500 hover:text-white text-xs uppercase tracking-widest transition-colors"
+                  className="px-5 py-2.5 text-[#64748B] hover:text-[#0F172A] text-sm transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={() => queueJob(JobStatus.PENDING)}
                   disabled={!selectedProfileId}
-                  className="px-6 py-2 bg-primary hover:bg-emerald-400 text-black font-bold rounded-lg text-xs uppercase tracking-widest transition-all shadow-lg shadow-primary/10 disabled:opacity-50"
+                  className="px-7 py-3 bg-primary hover:opacity-90 text-white font-semibold rounded-xl text-sm transition-all disabled:opacity-40"
                 >
                   Confirmar e Salvar como Pendente
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIG ALERT TOAST */}
+      {configAlert && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999]" style={{ animation: 'fade-in 0.3s ease-out' }}>
+          <div className="bg-white border border-amber-200 shadow-xl rounded-2xl px-5 py-4 flex items-start gap-3 max-w-lg">
+            <div className="w-9 h-9 shrink-0 rounded-xl bg-amber-50 flex items-center justify-center mt-0.5">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-base font-semibold text-[#0F172A] mb-0.5">Configuração Necessária</p>
+              <p className="text-sm text-[#64748B] leading-relaxed">{configAlert.message}</p>
+              <button
+                onClick={() => { setConfigAlert(null); setActiveTab('settings'); }}
+                className="mt-2.5 text-sm font-semibold text-primary hover:underline flex items-center gap-1.5"
+              >
+                <Settings className="w-3.5 h-3.5" /> Ir para Configurações
+              </button>
+            </div>
+            <button onClick={() => setConfigAlert(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors shrink-0">
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}

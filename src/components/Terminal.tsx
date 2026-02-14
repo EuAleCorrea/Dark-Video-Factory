@@ -25,25 +25,25 @@ const Terminal: React.FC<TerminalProps> = ({ logs, className = '' }) => {
 
   return (
     <div className={`font-mono text-[11px] p-4 overflow-y-auto custom-scrollbar flex flex-col leading-relaxed ${className}`}>
-        {logs.length === 0 && (
-            <div className="text-slate-700 italic flex items-center gap-2">
-                <span className="text-slate-600">[SYSTEM]</span>
-                Aguardando entrada do kernel...
-            </div>
-        )}
-        {logs.map((log, idx) => (
-          <div key={idx} className="flex gap-4 hover:bg-white/5 rounded px-1 -mx-1 transition-colors">
-            <span className="text-slate-600 shrink-0 select-none">[{log.timestamp}]</span>
-            <div className="flex-1 break-words">
-                <span className={`font-bold mr-2 uppercase tracking-wide ${getColor(log.level)}`}>{log.level}:</span>
-                <span className="text-slate-400">{log.message}</span>
-            </div>
+      {logs.length === 0 && (
+        <div className="text-[#94A3B8] italic flex items-center gap-2">
+          <span className="text-[#64748B]">[SYSTEM]</span>
+          Aguardando entrada do kernel...
+        </div>
+      )}
+      {logs.map((log, idx) => (
+        <div key={idx} className="flex gap-4 hover:bg-[#F8FAFC] rounded px-1 -mx-1 transition-colors">
+          <span className="text-[#94A3B8] shrink-0 select-none">[{log.timestamp}]</span>
+          <div className="flex-1 break-words">
+            <span className={`font-bold mr-2 uppercase tracking-wide ${getColor(log.level)}`}>{log.level}:</span>
+            <span className="text-[#334155]">{log.message}</span>
           </div>
-        ))}
-        <div ref={endRef} />
-        {logs.length > 0 && (
-             <div className="mt-2 text-slate-600 animate-pulse">_</div>
-        )}
+        </div>
+      ))}
+      <div ref={endRef} />
+      {logs.length > 0 && (
+        <div className="mt-2 text-[#94A3B8] animate-pulse">_</div>
+      )}
     </div>
   );
 };

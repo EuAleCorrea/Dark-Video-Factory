@@ -1,21 +1,30 @@
 @import "tailwindcss";
 
 /* ========================================
-   DARK FACTORY - Cyberpunk Console Theme
+   DARK FACTORY — Light Professional Theme
    ======================================== */
 
 @theme {
-  --color-primary: #10b981;
-  --color-primary-hover: #34d399;
-  --color-background-dark: #0a0a0a;
-  --color-surface-dark: #141414;
-  --color-border-dark: #262626;
-  --color-foreground: #e5e7eb;
-  --color-muted: #6b7280;
+  --color-primary: #0D9488;
+  --color-primary-hover: #0F766E;
+  --color-primary-muted: rgba(13, 148, 136, 0.1);
+  --color-primary-light: #CCFBF1;
+  --color-background: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-surface-hover: #F1F5F9;
+  --color-border: #E2E8F0;
+  --color-border-hover: #CBD5E1;
+  --color-foreground: #0F172A;
+  --color-muted: #64748B;
+  --color-muted-foreground: #94A3B8;
+  --color-danger: #EF4444;
+  --color-warning: #F59E0B;
+  --color-info: #3B82F6;
+  --color-success: #10B981;
 
-  --font-family-sans: 'Inter', system-ui, sans-serif;
-  --font-family-display: 'Inter', system-ui, sans-serif;
-  --font-family-mono: 'JetBrains Mono', monospace;
+  --font-family-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-display: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* ========================================
@@ -28,14 +37,18 @@
 
 html,
 body {
-  font-family: 'Inter', sans-serif;
-  background-color: #0a0a0a;
-  color: #e5e7eb;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  background-color: #F8FAFC;
+  color: #0F172A;
   overflow: hidden;
   height: 100%;
   width: 100%;
   margin: 0;
   padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
@@ -46,46 +59,12 @@ body {
 }
 
 /* ========================================
-   NEON GLOW EFFECTS
-   ======================================== */
-
-.glow-button {
-  box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
-  transition: all 0.3s ease;
-}
-
-.glow-button:hover {
-  box-shadow: 0 0 25px rgba(16, 185, 129, 0.4);
-  transform: translateY(-1px);
-}
-
-.glow-button:disabled {
-  box-shadow: none;
-  opacity: 0.5;
-  transform: none;
-  cursor: not-allowed;
-}
-
-.glow-text {
-  text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
-}
-
-/* ========================================
-   CYBERPUNK GRID BACKGROUND
-   ======================================== */
-
-.grid-bg {
-  background-image: radial-gradient(circle at 1px 1px, #1a1a1a 1px, transparent 0);
-  background-size: 24px 24px;
-}
-
-/* ========================================
-   MINIMALIST SCROLLBAR
+   SCROLLBAR — Subtle & Clean
    ======================================== */
 
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -93,56 +72,45 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #262626;
-  border-radius: 10px;
+  background: #CBD5E1;
+  border-radius: 999px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #404040;
+  background: #94A3B8;
 }
 
 /* ========================================
-   GLASSMORPHISM PANELS
-   ======================================== */
-
-.glass-panel {
-  background: rgba(20, 20, 20, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-/* ========================================
-   FORM ELEMENTS - Console Style
+   FORM ELEMENTS — Modern Clean
    ======================================== */
 
 input,
 textarea,
 select {
-  background-color: #141414;
-  border: 1px solid #262626;
-  border-radius: 6px;
-  color: #e5e7eb;
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  color: #0F172A;
   font-family: inherit;
-  transition: all 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: #10b981;
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+  border-color: #0D9488;
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
 }
 
 input::placeholder,
 textarea::placeholder {
-  color: #4b5563;
+  color: #94A3B8;
 }
 
 select option {
-  background-color: #141414;
-  color: #e5e7eb;
+  background-color: #FFFFFF;
+  color: #0F172A;
 }
 
 /* Remove number spinners */
@@ -154,6 +122,7 @@ input[type="number"]::-webkit-inner-spin-button {
 
 input[type="number"] {
   -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* ========================================
@@ -161,10 +130,10 @@ input[type="number"] {
    ======================================== */
 
 .status-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: pulse-clean 2.5s ease-in-out infinite;
 }
 
-@keyframes pulse {
+@keyframes pulse-clean {
 
   0%,
   100% {
@@ -172,41 +141,112 @@ input[type="number"] {
   }
 
   50% {
-    opacity: 0.5;
+    opacity: 0.4;
   }
 }
 
 .status-bar {
   height: 3px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, #10b981 var(--progress, 0%), #262626 var(--progress, 0%));
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0D9488 var(--progress, 0%), #E2E8F0 var(--progress, 0%));
 }
 
 /* ========================================
-   SIDEBAR ANIMATIONS
+   CARDS — Modern with subtle depth
    ======================================== */
 
-.sidebar-item {
-  transition: all 0.2s ease;
+.card-surface {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.sidebar-item:hover {
-  background: rgba(16, 185, 129, 0.1);
-}
-
-.sidebar-item.active {
-  background: rgba(16, 185, 129, 0.15);
-  border-left: 2px solid #10b981;
+.card-surface:hover {
+  border-color: #CBD5E1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
 /* ========================================
-   TERMINAL STYLE TEXT
+   BADGE STYLES — Refined
+   ======================================== */
+
+.badge {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+}
+
+.badge-success {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.badge-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #D97706;
+}
+
+.badge-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #DC2626;
+}
+
+.badge-info {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563EB;
+}
+
+/* ========================================
+   BUTTONS — Clean hover
+   ======================================== */
+
+.btn-primary {
+  background: #0D9488;
+  color: #FFFFFF;
+  font-weight: 600;
+  border-radius: 10px;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+  background: #0F766E;
+  transform: translateY(-1px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  transform: none;
+  cursor: not-allowed;
+}
+
+/* Backward compat alias */
+.glow-button {
+  transition: opacity 0.2s ease, transform 0.15s ease;
+}
+
+.glow-button:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.glow-button:disabled {
+  opacity: 0.4;
+  transform: none;
+  cursor: not-allowed;
+}
+
+/* ========================================
+   TERMINAL / MONO TEXT
    ======================================== */
 
 .terminal-text {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 0.05em;
+  font-size: 13px;
+  letter-spacing: 0.02em;
 }
 
 .mono {
@@ -214,50 +254,74 @@ input[type="number"] {
 }
 
 /* ========================================
-   CARD STYLES
+   GRID BACKGROUND — Subtle dots
    ======================================== */
 
-.card-dark {
-  background: #141414;
-  border: 1px solid #262626;
-  border-radius: 8px;
-}
-
-.card-dark:hover {
-  border-color: #404040;
+.grid-bg {
+  background-image: radial-gradient(circle at 1px 1px, #E2E8F0 1px, transparent 0);
+  background-size: 28px 28px;
 }
 
 /* ========================================
-   BADGE STYLES
+   GLASS PANEL — Clean blur
    ======================================== */
 
-.badge {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 2px 8px;
-  border-radius: 4px;
+.glass-panel {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
 }
 
-.badge-success {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+/* ========================================
+   MODAL ANIMATIONS
+   ======================================== */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
-.badge-warning {
-  background: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-.badge-error {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+.animate-in {
+  animation: fade-in 0.2s ease-out;
 }
 
-.badge-info {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+.scale-in-center {
+  animation: scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ========================================
+   SIDEBAR ITEMS
+   ======================================== */
+
+.sidebar-item {
+  transition: all 0.2s ease;
+}
+
+.sidebar-item:hover {
+  background: rgba(13, 148, 136, 0.06);
+}
+
+.sidebar-item.active {
+  background: rgba(13, 148, 136, 0.1);
+  border-left: 2px solid #0D9488;
 }
 
 /* ========================================

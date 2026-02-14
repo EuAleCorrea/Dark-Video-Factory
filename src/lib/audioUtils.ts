@@ -15,7 +15,7 @@ export const pcmToWav = (base64PCM: string, sampleRate: number = 24000): string 
 
   const wavHeader = createWavHeader(len, sampleRate);
   const wavBytes = new Uint8Array(wavHeader.length + len);
-  
+
   wavBytes.set(wavHeader, 0);
   wavBytes.set(bytes, wavHeader.length);
 
@@ -28,22 +28,22 @@ export const pcmToWav = (base64PCM: string, sampleRate: number = 24000): string 
  * Critical for synchronizing video frames to audio length.
  */
 export const getAudioDuration = (blobUrl: string): Promise<number> => {
-    return new Promise((resolve, reject) => {
-        const audio = new Audio(blobUrl);
-        audio.onloadedmetadata = () => {
-            if (audio.duration === Infinity) {
-                // Fallback for some browser edge cases with blob streams
-                audio.currentTime = 1e101;
-                audio.ontimeupdate = () => {
-                    audio.ontimeupdate = null;
-                    resolve(audio.duration);
-                }
-            } else {
-                resolve(audio.duration);
-            }
-        };
-        audio.onerror = (e) => reject(e);
-    });
+  return new Promise((resolve, reject) => {
+    const audio = new Audio(blobUrl);
+    audio.onloadedmetadata = () => {
+      if (audio.duration === Infinity) {
+        // Fallback for some browser edge cases with blob streams
+        audio.currentTime = 1e101;
+        audio.ontimeupdate = () => {
+          audio.ontimeupdate = null;
+          resolve(audio.duration);
+        }
+      } else {
+        resolve(audio.duration);
+      }
+    };
+    audio.onerror = (e) => reject(e);
+  });
 };
 
 const createWavHeader = (dataLength: number, sampleRate: number): Uint8Array => {
@@ -80,4 +80,26 @@ const writeString = (view: DataView, offset: number, string: string) => {
   for (let i = 0; i < string.length; i++) {
     view.setUint8(offset + i, string.charCodeAt(i));
   }
+};
+
+/** Converte base64 PCM para data URL WAV (para persistência em JSON/stageData) */
+export const pcmToWavDataUrl = (base64PCM: string, sampleRate: number = 24000): string => {
+  const binaryString = atob(base64PCM);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  const wavHeader = createWavHeader(len, sampleRate);
+  const wavBytes = new Uint8Array(wavHeader.length + len);
+  wavBytes.set(wavHeader, 0);
+  wavBytes.set(bytes, wavHeader.length);
+
+  // Convert to base64 data URL
+  let binary = '';
+  for (let i = 0; i < wavBytes.length; i++) {
+    binary += String.fromCharCode(wavBytes[i]);
+  }
+  return `data:audio/wav;base64,${btoa(binary)}`;
 };

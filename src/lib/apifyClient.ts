@@ -18,28 +18,8 @@ interface ApifyRun {
  * Implementa padrão de Polling com Circuit Breaker (Timeout).
  */
 export const fetchYoutubeTranscriptFromApify = async (videoId: string, apiToken: string): Promise<{ transcript: string, metadata: any }> => {
-    // SE ESTIVER NO NAVEGADOR: Usa nossa Rota de API como Proxy para evitar CORS
-    if (typeof window !== 'undefined') {
-        console.log(`[Apify Client] Ambiente Browser detectado. Usando Proxy local para ${videoId}`);
-        const response = await fetch('/api/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videoId, apiToken })
-        });
-
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || 'Falha na transcrição via Proxy');
-        }
-
-        const data = await response.json();
-        return {
-            transcript: data.transcript,
-            metadata: data.metadata
-        };
-    }
-
-    // SE ESTIVER NO SERVIDOR (Cloud Worker ou Proxy): Faz a chamada direta para a Apify
+    // In Tauri, we can call the Apify API directly without a proxy.
+    // The previous window !== 'undefined' check was for a web-proxy setup that doesn't exist here.
     try {
         console.log(`[Apify] Iniciando job real (starvibe) para video: ${videoId}`);
 

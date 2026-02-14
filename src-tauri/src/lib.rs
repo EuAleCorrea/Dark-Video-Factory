@@ -72,6 +72,23 @@ fn run_ffmpeg(args: Vec<String>) -> FfmpegResult {
     }
 }
 
+/// Write bytes to a file (for saving generated assets)
+#[tauri::command]
+fn write_file(path: String, content: Vec<u8>) -> Result<(), String> {
+    use std::fs::{File, create_dir_all};
+    use std::io::Write;
+    use std::path::Path;
+
+    let path_obj = Path::new(&path);
+    if let Some(parent) = path_obj.parent() {
+        create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut file = File::create(&path).map_err(|e| e.to_string())?;
+    file.write_all(&content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Get basic system info (CPU count, memory)
 #[tauri::command]
 fn get_system_info() -> serde_json::Value {
@@ -92,7 +109,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_ffmpeg,
             run_ffmpeg,
-            get_system_info
+            get_system_info,
+            write_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

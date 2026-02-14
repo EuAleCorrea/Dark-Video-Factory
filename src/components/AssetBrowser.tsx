@@ -9,7 +9,7 @@ interface AssetBrowserProps {
 }
 
 const AssetBrowser: React.FC<AssetBrowserProps> = ({ jobId, files, className = '' }) => {
-  
+
   const getIcon = (fileName: string, type: 'FILE' | 'DIR') => {
     if (type === 'DIR') return <Folder size={14} className="text-blue-400" />;
     if (fileName.endsWith('.mp4')) return <Film size={14} className="text-purple-400" />;
@@ -22,9 +22,9 @@ const AssetBrowser: React.FC<AssetBrowserProps> = ({ jobId, files, className = '
   return (
     <div className={`p-4 flex flex-col font-mono ${className}`}>
       {/* Header acting as "Mount Point" indicator */}
-      <div className="flex items-center gap-2 text-xs text-slate-500 mb-4 pb-2 border-b border-white/5">
-         <HardDrive size={14} className="text-primary" />
-         <span>/opt/dark-factory/jobs/{jobId}</span>
+      <div className="flex items-center gap-2 text-xs text-[#64748B] mb-4 pb-2 border-b border-[#E2E8F0]">
+        <HardDrive size={14} className="text-primary" />
+        <span>/opt/dark-factory/jobs/{jobId}</span>
       </div>
 
       {/* File List */}
@@ -34,19 +34,19 @@ const AssetBrowser: React.FC<AssetBrowserProps> = ({ jobId, files, className = '
             <span>[DIR_EMPTY]</span>
           </div>
         )}
-        
+
         {files.map((file, idx) => (
-          <div 
-            key={idx} 
-            className="group flex items-center justify-between px-2 py-1.5 hover:bg-white/5 rounded transition cursor-default"
+          <div
+            key={idx}
+            className="group flex items-center justify-between px-2 py-1.5 hover:bg-[#F8FAFC] rounded transition cursor-default"
           >
             <div className="flex items-center gap-3">
               {getIcon(file.name, file.type)}
-              <span className="text-xs text-slate-300 group-hover:text-white transition-colors">{file.name}</span>
+              <span className="text-xs text-[#334155] group-hover:text-[#0F172A] transition-colors">{file.name}</span>
             </div>
-            <div className="flex gap-4 text-[10px] text-slate-600 font-mono">
-                <span>{file.size}</span>
-                <span>{file.createdAt}</span>
+            <div className="flex gap-4 text-[10px] text-[#94A3B8] font-mono">
+              <span>{file.size}</span>
+              <span>{file.createdAt}</span>
             </div>
           </div>
         ))}

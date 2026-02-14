@@ -44,3 +44,16 @@ git push DarkVideoFactory Desktop_Video_Factory
 2. **Supabase dinâmico** — Usar `configureSupabase(url, key)` de `@/lib/supabase`
 3. **Guard no Supabase** — Sempre usar `isSupabaseConfigured()` antes de chamar Supabase
 4. **`.gitignore`** — `src-tauri/target/` nunca deve ser commitado
+
+## 📋 PRD — Documentação Técnica Obrigatória
+
+> 🔴 **REGRA OBRIGATÓRIA:** Antes de QUALQUER implementação, leia `docs/PRD.md`.
+> Este documento contém a arquitetura completa, pipeline, serviços, tipos, APIs e regras de negócio.
+> **NÃO pesquise o código do zero** — consulte o PRD primeiro para entender a estrutura existente.
+> Após implementações significativas, **atualize o PRD** com as mudanças feitas.
+
+- **Caminho:** `docs/PRD.md`
+- **Conteúdo:** Arquitetura, Pipeline Kanban (10 estágios), Serviços, Tipos, APIs externas, Storage map, Regras de negócio
+- **Quando consultar:** Sempre, antes de qualquer código novo
+- **Quando atualizar:** Após adicionar novos componentes, serviços, estágios ou regras
+

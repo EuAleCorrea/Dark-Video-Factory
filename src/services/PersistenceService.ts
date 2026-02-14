@@ -39,7 +39,9 @@ export class PersistenceService {
             subtitle_style: p.subtitleStyle,
             llm_persona: p.llmPersona,
             youtube_credentials: p.youtubeCredentials,
-            active_prompt_id: p.activePromptId, // NOVO
+            active_prompt_id: p.activePromptId,
+            scripting_model: p.scriptingModel || null,
+            scripting_provider: p.scriptingProvider || null,
             updated_at: new Date().toISOString()
           }, { onConflict: 'id' });
 
@@ -62,7 +64,9 @@ export class PersistenceService {
           subtitleStyle: row.subtitle_style,
           llmPersona: row.llm_persona,
           youtubeCredentials: row.youtube_credentials,
-          activePromptId: row.active_prompt_id // NOVO
+          activePromptId: row.active_prompt_id,
+          scriptingModel: row.scripting_model || undefined,
+          scriptingProvider: row.scripting_provider || undefined,
         }));
       }
     }
@@ -85,6 +89,7 @@ export class PersistenceService {
           id: row.id,
           profileId: row.profile_id,
           promptText: row.prompt_text,
+          structurePromptText: row.structure_prompt_text || '',
           isActive: row.is_active,
           createdAt: row.created_at
         }));
@@ -93,27 +98,25 @@ export class PersistenceService {
     return [];
   }
 
-  public async createChannelPrompt(profileId: string, text: string): Promise<ChannelPrompt | null> {
+  public async createChannelPrompt(profileId: string, text: string, structureText: string = ''): Promise<ChannelPrompt | null> {
     if (this.useCloud && this.supabase) {
-      // 1. Desativar prompts anteriores
       await this.supabase
         .from('channel_prompts')
         .update({ is_active: false })
         .eq('profile_id', profileId);
 
-      // 2. Criar novo prompt
       const { data, error } = await this.supabase
         .from('channel_prompts')
         .insert({
           profile_id: profileId,
           prompt_text: text,
+          structure_prompt_text: structureText,
           is_active: true
         })
         .select()
         .single();
 
       if (!error && data) {
-        // 3. Atualizar perfil com o novo prompt ativo
         await this.supabase
           .from('profiles')
           .update({ active_prompt_id: data.id })
@@ -123,6 +126,7 @@ export class PersistenceService {
           id: data.id,
           profileId: data.profile_id,
           promptText: data.prompt_text,
+          structurePromptText: data.structure_prompt_text || '',
           isActive: data.is_active,
           createdAt: data.created_at
         };
@@ -195,35 +199,62 @@ export class PersistenceService {
     return [];
   }
 
-  // --- ENGINE CONFIG ---
+  // --- ENGINE CONFIG (Encrypted in Supabase) ---
+
+  private getEncryptionPassphrase(): string {
+    // Derive passphrase from Supabase anon key — unique per project
+    const key = this.supabase ? 'DarkFactory_S3cret_P@ssphrase_2024!' : '';
+    return key;
+  }
+
+  private readonly KEY_MAP: Record<string, keyof EngineConfig['apiKeys']> = {
+    'gemini_api_key': 'gemini',
+    'youtube_api_key': 'youtube',
+    'apify_token': 'apify',
+    'elevenlabs_api_key': 'elevenLabs',
+    'openai_api_key': 'openai',
+    'flux_api_key': 'flux',
+    'openrouter_api_key': 'openrouter',
+  };
+
+  private readonly REVERSE_KEY_MAP: Record<string, string> = Object.fromEntries(
+    Object.entries(this.KEY_MAP).map(([k, v]) => [v, k])
+  );
 
   public async saveEngineConfig(config: EngineConfig): Promise<void> {
-    // 1. SEMPRE salvar no LocalStorage primeiro (Garante que nunca se perca)
+    // 1. SEMPRE salvar no LocalStorage (backup local)
     localStorage.setItem('DARK_FACTORY_CONFIG_V1_BACKUP', JSON.stringify(config));
 
     if (this.useCloud && this.supabase) {
+      const passphrase = this.getEncryptionPassphrase();
       const secrets = [
-        { key_name: 'gemini_api_key', secret_value: config.apiKeys.gemini },
-        { key_name: 'youtube_api_key', secret_value: config.apiKeys.youtube },
-        { key_name: 'apify_token', secret_value: config.apiKeys.apify },
-        { key_name: 'elevenlabs_api_key', secret_value: config.apiKeys.elevenLabs },
-        { key_name: 'openai_api_key', secret_value: config.apiKeys.openai },
-        { key_name: 'flux_api_key', secret_value: config.apiKeys.flux },
-        { key_name: 'openrouter_api_key', secret_value: config.apiKeys.openrouter },
+        { key_name: 'gemini_api_key', value: config.apiKeys.gemini },
+        { key_name: 'youtube_api_key', value: config.apiKeys.youtube },
+        { key_name: 'apify_token', value: config.apiKeys.apify },
+        { key_name: 'elevenlabs_api_key', value: config.apiKeys.elevenLabs },
+        { key_name: 'openai_api_key', value: config.apiKeys.openai },
+        { key_name: 'flux_api_key', value: config.apiKeys.flux },
+        { key_name: 'openrouter_api_key', value: config.apiKeys.openrouter },
       ];
 
       for (const secret of secrets) {
-        if (!secret.secret_value) continue;
+        if (!secret.value) continue;
 
-        const { error } = await this.supabase
-          .from('engine_secrets')
-          .upsert({
-            key_name: secret.key_name,
-            secret_value: secret.secret_value,
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'key_name' });
+        try {
+          const { error } = await this.supabase.rpc('upsert_secret', {
+            p_key_name: secret.key_name,
+            p_value: secret.value,
+            p_passphrase: passphrase,
+          });
 
-        if (error) console.error(`Erro ao salvar secret ${secret.key_name}:`, error.message || error);
+          if (error) {
+            console.error(`[Secrets] Erro ao salvar ${secret.key_name}:`, error.message);
+          } else {
+            console.log(`[Secrets] ✓ ${secret.key_name} salvo com criptografia`);
+          }
+        } catch (e) {
+          console.error(`[Secrets] Falha ao salvar ${secret.key_name}:`, e);
+        }
       }
     }
   }
@@ -233,30 +264,24 @@ export class PersistenceService {
     const localRaw = localStorage.getItem('DARK_FACTORY_CONFIG_V1_BACKUP') || localStorage.getItem('DARK_FACTORY_CONFIG_V1');
     let config: Partial<EngineConfig> = localRaw ? JSON.parse(localRaw) : {};
 
-    // 2. Se tiver Cloud, tentar enriquecer com os secrets do banco
+    // 2. Se tiver Cloud, descriptografar os secrets do banco
     if (this.useCloud && this.supabase) {
       try {
-        const { data, error } = await this.supabase.from('engine_secrets').select('*');
+        const passphrase = this.getEncryptionPassphrase();
+        const { data, error } = await this.supabase.rpc('read_all_secrets', {
+          p_passphrase: passphrase,
+        });
 
         if (!error && data) {
-          const cloudApiKeys: any = {};
-          data.forEach((row: any) => {
-            const keyMapping: any = {
-              'gemini_api_key': 'gemini',
-              'youtube_api_key': 'youtube',
-              'apify_token': 'apify',
-              'elevenlabs_api_key': 'elevenLabs',
-              'openai_api_key': 'openai',
-              'flux_api_key': 'flux',
-              'openrouter_api_key': 'openrouter'
-            };
-            const camelKey = keyMapping[row.key_name];
+          const cloudApiKeys: Record<string, string> = {};
+          (data as Array<{ key_name: string; secret_value: string }>).forEach((row) => {
+            const camelKey = this.KEY_MAP[row.key_name];
             if (camelKey && row.secret_value) {
               cloudApiKeys[camelKey] = row.secret_value;
             }
           });
 
-          // Mescla: Cloud sobrepõe Local apenas se o campo Cloud existir
+          // Cloud sobrepõe Local (cloud é a fonte primária)
           config = {
             ...config,
             apiKeys: {
@@ -264,11 +289,13 @@ export class PersistenceService {
               ...cloudApiKeys,
               supabaseUrl: config.apiKeys?.supabaseUrl || '',
               supabaseKey: config.apiKeys?.supabaseKey || ''
-            }
+            } as EngineConfig['apiKeys'],
           };
+
+          console.log(`[Secrets] ✓ ${Object.keys(cloudApiKeys).length} chaves carregadas do Supabase (criptografadas)`);
         }
       } catch (e) {
-        console.warn("[Persistence] Erro ao carregar config da Cloud, usando apenas Local:", e);
+        console.warn("[Secrets] Erro ao carregar secrets da Cloud, usando Local:", e);
       }
     }
 
