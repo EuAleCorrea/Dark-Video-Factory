@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Mic, Zap, Play, Search, AlertTriangle, RefreshCw, Settings2, Bookmark, ChevronRight, X, ChevronDown, Check, Download, Loader2 } from 'lucide-react';
 import { ElevenLabsService } from '../services/ElevenLabsService';
 import { ElevenLabsVoice, ElevenLabsModel, ElevenLabsUser, ElevenLabsSettings } from '../types';
+import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
 
 interface ElevenLabsPanelProps {
     apiKey: string;
@@ -32,6 +34,7 @@ export const ElevenLabsPanel: React.FC<ElevenLabsPanelProps> = ({ apiKey, onClos
     const [favorites, setFavorites] = useState<Set<string>>(new Set());
     const [viewMode, setViewMode] = useState<'all' | 'favorites'>('all');
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const [audioBytes, setAudioBytes] = useState<Uint8Array | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
 
     // Load Data
@@ -95,9 +98,12 @@ export const ElevenLabsPanel: React.FC<ElevenLabsPanelProps> = ({ apiKey, onClos
         setIsGenerating(true);
         setError(null);
         setAudioUrl(null);
+        setAudioBytes(null);
 
         try {
             const blob = await service.generateAudio(selectedVoiceId, text, selectedModelId, settings);
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            setAudioBytes(bytes);
             const url = URL.createObjectURL(blob);
             setAudioUrl(url);
 
@@ -115,18 +121,20 @@ export const ElevenLabsPanel: React.FC<ElevenLabsPanelProps> = ({ apiKey, onClos
         }
     };
 
-    const handleDownload = () => {
-        if (!audioUrl) return;
-        const link = document.createElement('a');
-        link.href = audioUrl;
-        link.download = `elevenlabs_${selectedVoice?.name.replace(/\s+/g, '_') || 'audio'}_${Date.now()}.mp3`;
-        document.body.appendChild(link);
-        link.click();
-
-        // Pequeno delay para garantir que o download inicie antes de remover o elemento
-        setTimeout(() => {
-            document.body.removeChild(link);
-        }, 100);
+    const handleDownload = async () => {
+        if (!audioBytes) return;
+        try {
+            const fileName = `elevenlabs_${selectedVoice?.name.replace(/\s+/g, '_') || 'audio'}_${Date.now()}.mp3`;
+            const filePath = await save({
+                defaultPath: fileName,
+                filters: [{ name: 'Audio MP3', extensions: ['mp3'] }]
+            });
+            if (!filePath) return;
+            await invoke('write_file', { path: filePath, content: Array.from(audioBytes) });
+            console.log(`[ElevenLabs] Arquivo salvo: ${filePath}`);
+        } catch (err: any) {
+            console.error('[ElevenLabs] Erro ao baixar:', err);
+        }
     };
 
     const selectedVoice = voices.find(v => v.voice_id === selectedVoiceId);
@@ -216,14 +224,14 @@ export const ElevenLabsPanel: React.FC<ElevenLabsPanelProps> = ({ apiKey, onClos
                         {/* Audio Player Floating Bar (Shows when audio exists) */}
                         {audioUrl && (
                             <div className="absolute bottom-8 left-8 right-auto flex items-center gap-4 p-4 bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl z-20 animate-in slide-in-from-bottom-5 duration-300">
-                                <audio controls src={audioUrl} className="h-8 w-64" />
+                                <audio controls controlsList="nodownload" src={audioUrl} className="h-8 w-64" />
                                 <div className="h-8 w-[1px] bg-slate-200" />
                                 <button
                                     onClick={handleDownload}
                                     className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-emerald-600 transition-colors"
                                 >
                                     <Download size={16} />
-                                    <span>Download MP3</span>
+                                    <span>Baixar MP3</span>
                                 </button>
                             </div>
                         )}

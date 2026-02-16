@@ -382,7 +382,7 @@ export const generateVideoScriptAndPrompts = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: systemPrompt,
       config: {
         responseMimeType: "application/json",
@@ -437,7 +437,7 @@ export const generateVideoMetadata = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -531,9 +531,9 @@ export const generateSpeech = async (text: string, voiceId: string = 'Kore', con
 
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
-        contents: { parts: [{ text }] },
+        contents: [{ parts: [{ text }] }],
         config: {
-          responseModalities: [Modality.AUDIO],
+          responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: { voiceName: voiceId },
@@ -542,10 +542,15 @@ export const generateSpeech = async (text: string, voiceId: string = 'Kore', con
         },
       });
 
-      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!audioData) throw new Error("Gemini TTS retornou resposta vazia.");
+      const audioPart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+      const audioData = audioPart?.inlineData?.data;
 
-      console.log(`[TTS] ✅ Áudio gerado com sucesso (${(audioData.length / 1024).toFixed(0)} KB base64)`);
+      if (!audioData) {
+        console.error("[TTS] Resposta sem áudio:", response);
+        throw new Error("O Gemini não retornou dados de áudio.");
+      }
+
+      console.log(`[TTS] ✅ Áudio gerado com sucesso`);
       return audioData;
 
     } catch (error) {

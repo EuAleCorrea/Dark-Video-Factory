@@ -21,6 +21,7 @@ import StageActionModal from './components/StageActionModal';
 import TranscriptApprovalModal from './components/TranscriptApprovalModal';
 import StageDetailsModal from './components/StageDetailsModal';
 import { ElevenLabsPanel } from './components/ElevenLabsPanel';
+import { GoogleTTSPanel } from './components/GoogleTTSPanel';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
 import { ProjectService } from './services/ProjectService';
@@ -46,7 +47,7 @@ const INITIAL_CONFIG: EngineConfig = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts'>('pipeline');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
@@ -745,6 +746,7 @@ export default function App() {
               { id: 'profiles', icon: Layers, label: 'Perfis' },
               { id: 'settings', icon: Settings, label: 'Configuração' },
               { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
+              { id: 'google-tts', icon: Mic, label: 'Google TTS' },
             ].map((item) => (
               <button
                 key={item.id}
@@ -933,6 +935,11 @@ export default function App() {
           ) : activeTab === 'test-11labs' ? (
             <ElevenLabsPanel
               apiKey={config.apiKeys.elevenLabs}
+              onClose={() => setActiveTab('pipeline')}
+            />
+          ) : activeTab === 'google-tts' ? (
+            <GoogleTTSPanel
+              config={config}
               onClose={() => setActiveTab('pipeline')}
             />
           ) : (

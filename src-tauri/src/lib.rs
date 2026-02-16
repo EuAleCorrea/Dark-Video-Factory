@@ -114,6 +114,21 @@ fn get_temp_dir() -> String {
         .to_string()
 }
 
+/// Get OS downloads directory path
+#[tauri::command]
+fn get_downloads_dir() -> String {
+    let home = if cfg!(windows) {
+        std::env::var("USERPROFILE").unwrap_or_default()
+    } else {
+        std::env::var("HOME").unwrap_or_default()
+    };
+    if home.is_empty() {
+        return get_temp_dir();
+    }
+    let sep = if cfg!(windows) { "\\" } else { "/" };
+    format!("{}{}Downloads", home, sep)
+}
+
 /// Get basic system info (CPU count, memory)
 #[tauri::command]
 fn get_system_info() -> serde_json::Value {
@@ -131,6 +146,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             check_ffmpeg,
             run_ffmpeg,
@@ -138,7 +154,8 @@ pub fn run() {
             write_file,
             read_file,
             delete_file_cmd,
-            get_temp_dir
+            get_temp_dir,
+            get_downloads_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
