@@ -11,9 +11,11 @@ interface KanbanColumnProps {
     onToggleSelect: (id: string) => void;
     onProjectClick: (project: VideoProject) => void;
     onDeleteProject: (id: string) => void;
+    onStageClick?: (project: VideoProject, stage: PipelineStage) => void;
+    onViewError?: (project: VideoProject) => void;
 }
 
-export default function KanbanColumn({ stage, meta, projects, selectedIds, onToggleSelect, onProjectClick, onDeleteProject }: KanbanColumnProps) {
+export default function KanbanColumn({ stage, meta, projects, selectedIds, onToggleSelect, onProjectClick, onDeleteProject, onStageClick, onViewError }: KanbanColumnProps) {
     const count = projects.length;
     const hasProjects = count > 0;
 
@@ -64,6 +66,8 @@ export default function KanbanColumn({ stage, meta, projects, selectedIds, onTog
                                             onToggleSelect={() => onToggleSelect(project.id)}
                                             onClick={() => onProjectClick(project)}
                                             onDelete={() => onDeleteProject(project.id)}
+                                            onStageClick={onStageClick}
+                                            onViewError={onViewError}
                                         />
                                     </div>
                                 )}

@@ -89,6 +89,31 @@ fn write_file(path: String, content: Vec<u8>) -> Result<(), String> {
     Ok(())
 }
 
+/// Read a binary file from filesystem and return its bytes
+#[tauri::command]
+fn read_file(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| format!("Failed to read file '{}': {}", path, e))
+}
+
+/// Delete a file from the filesystem (for temp file cleanup)
+#[tauri::command]
+fn delete_file_cmd(path: String) -> Result<(), String> {
+    if std::path::Path::new(&path).exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete '{}': {}", path, e))
+    } else {
+        Ok(()) // File doesn't exist, nothing to do
+    }
+}
+
+/// Get OS temp directory path
+#[tauri::command]
+fn get_temp_dir() -> String {
+    std::env::temp_dir()
+        .join("DarkVideoFactory")
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Get basic system info (CPU count, memory)
 #[tauri::command]
 fn get_system_info() -> serde_json::Value {
@@ -110,7 +135,10 @@ pub fn run() {
             check_ffmpeg,
             run_ffmpeg,
             get_system_info,
-            write_file
+            write_file,
+            read_file,
+            delete_file_cmd,
+            get_temp_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

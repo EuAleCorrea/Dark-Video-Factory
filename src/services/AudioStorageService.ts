@@ -48,6 +48,20 @@ export async function loadAudioBlobUrl(projectId: string): Promise<string | null
     });
 }
 
+/** Carrega áudio raw do IndexedDB como Uint8Array (sem converter para Blob) */
+export async function loadAudioRaw(projectId: string): Promise<Uint8Array | null> {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const request = tx.objectStore(STORE_NAME).get(projectId);
+        request.onsuccess = () => {
+            const data = request.result as Uint8Array | undefined;
+            resolve(data ?? null);
+        };
+        request.onerror = () => reject(request.error);
+    });
+}
+
 /** Remove áudio do IndexedDB */
 export async function deleteAudio(projectId: string): Promise<void> {
     const db = await openDB();

@@ -9,9 +9,11 @@ interface KanbanBoardProps {
     onToggleSelect: (id: string) => void;
     onProjectClick: (project: VideoProject) => void;
     onDeleteProject: (id: string) => void;
+    onStageClick?: (project: VideoProject, stage: PipelineStage) => void;
+    onViewError?: (project: VideoProject) => void;
 }
 
-export default function KanbanBoard({ projects, selectedIds, onToggleSelect, onProjectClick, onDeleteProject, onDragEnd }: KanbanBoardProps & { onDragEnd: (result: any) => void }) {
+export default function KanbanBoard({ projects, selectedIds, onToggleSelect, onProjectClick, onDeleteProject, onStageClick, onViewError, onDragEnd }: KanbanBoardProps & { onDragEnd: (result: any) => void }) {
     const projectsByStage = (stage: PipelineStage): VideoProject[] => {
         return projects.filter(p => p.currentStage === stage);
     };
@@ -33,6 +35,8 @@ export default function KanbanBoard({ projects, selectedIds, onToggleSelect, onP
                                 onToggleSelect={onToggleSelect}
                                 onProjectClick={onProjectClick}
                                 onDeleteProject={onDeleteProject}
+                                onStageClick={onStageClick}
+                                onViewError={onViewError}
                             />
                         );
                     })}

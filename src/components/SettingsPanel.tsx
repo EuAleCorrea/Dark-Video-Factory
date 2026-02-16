@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Save, HardDrive, Key, Server, AlertCircle, Cpu, Image as ImageIcon, Mic, Youtube, Box, Database, CheckCircle, XCircle, Loader2, ShieldCheck, Info } from 'lucide-react';
 import { EngineConfig } from '../types';
 import { PersistenceService } from '../services/PersistenceService';
+import { getAvailableModels, LLMModelOption } from '../services/llmModelService';
+import { ApifyAccountInfo } from '../lib/apifyClient';
+import { useEffect } from 'react';
 
 interface SettingsPanelProps {
     config: EngineConfig;
@@ -16,6 +19,29 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
     const [testStatus, setTestStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'ERROR'>('IDLE');
     const [testMessage, setTestMessage] = useState('');
 
+    // LLM Models
+    const [availableModels, setAvailableModels] = useState<LLMModelOption[]>([]);
+    const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+    // Apify Check State
+    const [apifyCheckStatus, setApifyCheckStatus] = useState<'IDLE' | 'LOADING' | 'DONE' | 'ERROR'>('IDLE');
+    const [apifyAccounts, setApifyAccounts] = useState<ApifyAccountInfo[]>([]);
+
+    useEffect(() => {
+        const fetchModels = async () => {
+            setIsLoadingModels(true);
+            try {
+                const models = await getAvailableModels(localConfig);
+                setAvailableModels(models);
+            } catch (e) {
+                console.error('Erro ao buscar modelos:', e);
+            } finally {
+                setIsLoadingModels(false);
+            }
+        };
+        fetchModels();
+    }, [localConfig.apiKeys]); // Refresh when keys change
+
     const handleChange = (field: keyof EngineConfig, value: any) => {
         setLocalConfig(prev => ({ ...prev, [field]: value }));
         setIsSaved(false);
@@ -28,6 +54,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
         }));
         setIsSaved(false);
     }
+
+    const handleModelChange = (modelId: string) => {
+        const model = availableModels.find(m => m.id === modelId);
+        if (!model) return;
+
+        setLocalConfig(prev => ({
+            ...prev,
+            scriptingModel: model.id,
+            scriptingProvider: model.provider,
+            providers: { ...prev.providers, scripting: model.provider }
+        }));
+        setIsSaved(false);
+    };
 
     const handleKeyChange = (provider: keyof EngineConfig['apiKeys'], value: string) => {
         setLocalConfig(prev => ({
@@ -114,15 +153,31 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
                         </label>
                         <div className="relative">
                             <select
-                                className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] text-sm font-medium outline-none focus:border-blue-500 transition appearance-none"
-                                value={localConfig.providers.scripting}
-                                onChange={(e) => handleProviderChange('scripting', e.target.value)}
+                                className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] text-sm font-medium outline-none focus:border-blue-500 transition appearance-none disabled:opacity-50"
+                                value={localConfig.scriptingModel || ''}
+                                onChange={(e) => handleModelChange(e.target.value)}
+                                disabled={isLoadingModels}
                             >
-                                <option value="GEMINI">Gemini 1.5 Pro (Gratuito / Rápido)</option>
-                                <option value="OPENAI">OpenAI GPT-4o (Pago / Complexo)</option>
-                                <option value="OPENROUTER">OpenRouter / Claude 3.5 (Pago)</option>
+                                <option value="">Selecione um Motor...</option>
+                                <optgroup label="Google Gemini">
+                                    {availableModels.filter(m => m.provider === 'GEMINI').map(m => (
+                                        <option key={m.id} value={m.id}>{m.name} {m.isFree ? '(Gratuito)' : '(Pago)'}</option>
+                                    ))}
+                                </optgroup>
+                                <optgroup label="OpenAI">
+                                    {availableModels.filter(m => m.provider === 'OPENAI').map(m => (
+                                        <option key={m.id} value={m.id}>{m.name} (Pago)</option>
+                                    ))}
+                                </optgroup>
+                                <optgroup label="OpenRouter (Claude/OSS)">
+                                    {availableModels.filter(m => m.provider === 'OPENROUTER').map(m => (
+                                        <option key={m.id} value={m.id}>{m.name} (Free/Paid)</option>
+                                    ))}
+                                </optgroup>
                             </select>
-                            <div className="absolute right-3 top-3.5 pointer-events-none text-[#94A3B8]">▼</div>
+                            <div className="absolute right-3 top-3.5 pointer-events-none text-[#94A3B8]">
+                                {isLoadingModels ? <Loader2 size={16} className="animate-spin" /> : '▼'}
+                            </div>
                         </div>
                         <p className="text-xs text-[#94A3B8] leading-relaxed">
                             Escolha "GPT-4o" para roteiros com nuances complexas ou "Gemini" para velocidade e eficiência de custo.
@@ -268,15 +323,81 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
 
                     <div className="col-span-2 md:col-span-1">
                         <label className="block text-sm font-bold text-cyan-500 mb-2 flex items-center gap-2">
-                            APIFY Token (Scraper)
+                            APIFY Tokens (Scraper)
+                            {(() => {
+                                const count = (localConfig.apiKeys.apify || '').split(/[,;\n]+/).filter((t: string) => t.trim().length > 0).length;
+                                return count > 0 ? (
+                                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700">
+                                        🔑 {count} chave{count > 1 ? 's' : ''}
+                                    </span>
+                                ) : null;
+                            })()}
                         </label>
-                        <input
-                            type="password"
-                            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-cyan-500 outline-none tracking-widest placeholder:text-[#CBD5E1]"
+                        <textarea
+                            rows={3}
+                            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-xs focus:border-cyan-500 outline-none tracking-widest placeholder:text-[#CBD5E1] resize-none"
                             value={localConfig.apiKeys.apify || ''}
                             onChange={(e) => handleKeyChange('apify', e.target.value)}
-                            placeholder="apify_api_..."
+                            placeholder={"apify_api_chave1\napify_api_chave2\napify_api_chave3"}
                         />
+                        <p className="text-xs text-gray-400 mt-1 mb-2">
+                            Cole múltiplas chaves (uma por linha). O sistema tenta cada uma automaticamente.
+                        </p>
+
+                        <div className="space-y-2">
+                            <button
+                                onClick={async () => {
+                                    setApifyCheckStatus('LOADING');
+                                    try {
+                                        const { checkAllApifyTokens } = await import('../lib/apifyClient');
+                                        const results = await checkAllApifyTokens(localConfig.apiKeys.apify || '');
+                                        setApifyAccounts(results);
+                                        setApifyCheckStatus('DONE');
+                                    } catch (e) {
+                                        console.error(e);
+                                        setApifyCheckStatus('ERROR');
+                                    }
+                                }}
+                                disabled={!localConfig.apiKeys.apify || apifyCheckStatus === 'LOADING'}
+                                className="text-xs bg-cyan-50 text-cyan-700 px-3 py-1.5 rounded hover:bg-cyan-100 transition flex items-center gap-2 disabled:opacity-50"
+                            >
+                                {apifyCheckStatus === 'LOADING' ? <Loader2 size={12} className="animate-spin" /> : <Server size={12} />}
+                                Verificar Status das Chaves
+                            </button>
+
+                            {apifyAccounts.length > 0 && (
+                                <div className="bg-white border boundary-cyan-100 rounded-lg overflow-hidden text-xs">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-cyan-50 text-cyan-800 font-semibold">
+                                            <tr>
+                                                <th className="p-2">Conta</th>
+                                                <th className="p-2">Plano</th>
+                                                <th className="p-2">Uso (USD)</th>
+                                                <th className="p-2 text-right">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {apifyAccounts.map((acc, i) => (
+                                                <tr key={i} className={acc.isLimitReached ? 'bg-red-50' : ''}>
+                                                    <td className="p-2 text-gray-700">@{acc.username}</td>
+                                                    <td className="p-2 text-gray-500 uppercase">{acc.plan}</td>
+                                                    <td className="p-2 font-mono">
+                                                        ${acc.usageUsd.toFixed(2)} <span className="text-gray-400">/ ${acc.limitUsd}</span>
+                                                    </td>
+                                                    <td className="p-2 text-right">
+                                                        {acc.isLimitReached ? (
+                                                            <span className="text-red-600 font-bold flex items-center justify-end gap-1"><AlertCircle size={10} /> LIMITE</span>
+                                                        ) : (
+                                                            <span className="text-emerald-600 font-bold flex items-center justify-end gap-1"><CheckCircle size={10} /> OK</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     <div className="col-span-2 md:col-span-1">

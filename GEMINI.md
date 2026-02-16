@@ -44,6 +44,7 @@ git push DarkVideoFactory Desktop_Video_Factory
 2. **Supabase dinâmico** — Usar `configureSupabase(url, key)` de `@/lib/supabase`
 3. **Guard no Supabase** — Sempre usar `isSupabaseConfigured()` antes de chamar Supabase
 4. **`.gitignore`** — `src-tauri/target/` nunca deve ser commitado
+5. **Restart Automático** — Sempre que uma implementação for aplicada, matar o serviço atual e reiniciar (npx tauri dev) sem perguntar.
 
 ## 📋 PRD — Documentação Técnica Obrigatória
 

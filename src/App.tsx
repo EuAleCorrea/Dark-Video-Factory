@@ -3,7 +3,7 @@ import {
   Activity, Layers, Settings, Play, StopCircle, Terminal as TerminalIcon,
   CheckCircle, Search, FileText, Loader2, X, MonitorPlay, FolderOpen,
   RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap, AlertTriangle, Info,
-  Plus, LayoutGrid
+  Plus, LayoutGrid, Mic
 } from 'lucide-react';
 import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob, VideoProject, PipelineStage, PIPELINE_STAGES_ORDER } from './types';
 import ProfileEditor from './components/ProfileEditor';
@@ -19,12 +19,17 @@ import KanbanBoard from './components/KanbanBoard';
 import BatchActionBar from './components/BatchActionBar';
 import StageActionModal from './components/StageActionModal';
 import TranscriptApprovalModal from './components/TranscriptApprovalModal';
+import StageDetailsModal from './components/StageDetailsModal';
+import { ElevenLabsPanel } from './components/ElevenLabsPanel';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
 import { ProjectService } from './services/ProjectService';
 import { useJobMonitor } from './hooks/useJobMonitor';
 import { JobQueueService } from './services/JobQueueService';
-import { PipelineExecutor } from './services/PipelineExecutor';
+import { PipelineExecutor, PromptPreviewRequest } from './services/PipelineExecutor';
+import { configureSupabase } from './lib/supabase';
+import PromptDebugModal, { PromptPreviewData } from './components/PromptDebugModal';
+import ErrorDetailModal from './components/ErrorDetailModal';
 
 const STORAGE_KEY_CONFIG = 'DARK_FACTORY_CONFIG_V1';
 
@@ -41,7 +46,7 @@ const INITIAL_CONFIG: EngineConfig = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs'>('pipeline');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
@@ -57,6 +62,16 @@ export default function App() {
   const [isStageModalOpen, setIsStageModalOpen] = useState(false);
   const [stageModalMode, setStageModalMode] = useState<'auto' | 'manual'>('auto');
   const [reviewProjects, setReviewProjects] = useState<VideoProject[]>([]);
+  const [detailsProject, setDetailsProject] = useState<VideoProject | null>(null);
+  const [detailsStage, setDetailsStage] = useState<PipelineStage | null>(null);
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
+  const [errorProject, setErrorProject] = useState<VideoProject | null>(null);
+
+  // Debug Prompt State
+  const [isDebugModalOpen, setIsDebugModalOpen] = useState(false);
+  const [debugData, setDebugData] = useState<PromptPreviewData | null>(null);
+  const debugResolveRef = useRef<((value: boolean) => void) | null>(null);
 
   const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
 
@@ -119,6 +134,15 @@ export default function App() {
         (id) => profilesRef.current.find(p => p.id === id) // Dynamic profile access
       );
 
+      // Set Prompt Preview Callback
+      pipelineExecutorRef.current.setPromptPreview((data) => {
+        return new Promise((resolve) => {
+          setDebugData(data);
+          setIsDebugModalOpen(true);
+          debugResolveRef.current = resolve;
+        });
+      });
+
       // 5. Carregar Projetos
       const savedProjects = await projectServiceRef.current.loadProjects();
       setProjects(savedProjects);
@@ -131,6 +155,12 @@ export default function App() {
   useEffect(() => {
     if (!isConfigLoaded) return;
     persistenceRef.current.updateConfig(config);
+
+    // Sincroniza o cliente global (usado pelo ProjectService)
+    if (config.apiKeys.supabaseUrl && config.apiKeys.supabaseKey) {
+      configureSupabase(config.apiKeys.supabaseUrl, config.apiKeys.supabaseKey);
+    }
+
     localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
     persistenceRef.current.saveEngineConfig(config);
   }, [config, isConfigLoaded]);
@@ -193,6 +223,33 @@ export default function App() {
       () => rewritePrompt || undefined,
     );
   }, [profiles, config, handleJobUpdate, rewritePrompt]);
+
+  const handleStageClick = (project: VideoProject, stage: PipelineStage) => {
+    setDetailsProject(project);
+    setDetailsStage(stage);
+    setIsDetailsModalOpen(true);
+  };
+
+  const handleViewError = (project: VideoProject) => {
+    setErrorProject(project);
+    setIsErrorModalOpen(true);
+  };
+
+  const handleResetStage = async (projectId: string) => {
+    try {
+      const project = projects.find(p => p.id === projectId);
+      if (!project) return;
+
+      await projectServiceRef.current.updateProject(projectId, {
+        status: 'ready',
+        errorMessage: undefined
+      });
+
+      setProjects(prev => prev.map(p => p.id === projectId ? { ...p, status: 'ready', errorMessage: undefined, updatedAt: new Date().toISOString() } : p));
+    } catch (e) {
+      console.error('Failed to reset project stage:', e);
+    }
+  };
 
   const selectedJob = jobs.find(j => j.id === selectedJobId) || jobs[0] || null;
   const metrics: SystemMetrics = {
@@ -264,7 +321,7 @@ export default function App() {
           videoId: video.id,
           videoUrl: `https://youtube.com/watch?v=${video.id}`,
           videoTitle: video.title,
-          channelName: modelChannelInput || 'Desconhecido',
+          channelName: video.channelName,
           transcript: video.transcript,
           thumbnailUrl: video.thumbnailUrl,
           mode: 'auto'
@@ -379,7 +436,7 @@ export default function App() {
             videoId: video.id,
             videoUrl: `https://youtube.com/watch?v=${video.id}`,
             videoTitle: video.title,
-            channelName: modelChannelInput || 'Desconhecido',
+            channelName: video.channelName,
             thumbnailUrl: video.thumbnailUrl,
             transcript: video.transcript,
             mode: 'auto',
@@ -687,6 +744,7 @@ export default function App() {
               { id: 'dashboard', icon: Activity, label: 'Dashboard' },
               { id: 'profiles', icon: Layers, label: 'Perfis' },
               { id: 'settings', icon: Settings, label: 'Configuração' },
+              { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
             ].map((item) => (
               <button
                 key={item.id}
@@ -762,6 +820,8 @@ export default function App() {
                 onToggleSelect={handleToggleProjectSelect}
                 onProjectClick={handleProjectClick}
                 onDeleteProject={handleDeleteProject}
+                onStageClick={handleStageClick}
+                onViewError={handleViewError}
                 onDragEnd={async (result) => {
                   const { destination, source, draggableId } = result;
 
@@ -870,6 +930,11 @@ export default function App() {
                 />
               </div>
             </div>
+          ) : activeTab === 'test-11labs' ? (
+            <ElevenLabsPanel
+              apiKey={config.apiKeys.elevenLabs}
+              onClose={() => setActiveTab('pipeline')}
+            />
           ) : (
             <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
               <SettingsPanel config={config} onSave={setConfig} />
@@ -989,6 +1054,34 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* MODAL DE DETALHES DO ESTÁGIO */}
+      <StageDetailsModal
+        isOpen={isDetailsModalOpen}
+        onClose={() => setIsDetailsModalOpen(false)}
+        project={detailsProject}
+        stage={detailsStage}
+      />
+
+      {/* PROMPT DEBUG MODAL */}
+      <PromptDebugModal
+        isOpen={isDebugModalOpen}
+        data={debugData}
+        onConfirm={() => {
+          setIsDebugModalOpen(false);
+          debugResolveRef.current?.(true);
+        }}
+        onCancel={() => {
+          setIsDebugModalOpen(false);
+          debugResolveRef.current?.(false);
+        }}
+      />
+      <ErrorDetailModal
+        isOpen={isErrorModalOpen}
+        onClose={() => setIsErrorModalOpen(false)}
+        project={errorProject}
+        onResetStage={handleResetStage}
+      />
     </>
   );
 }

@@ -10,11 +10,20 @@ export interface LLMModelOption {
 
 // Static models for Gemini and OpenAI
 const STATIC_MODELS: LLMModelOption[] = [
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
-    { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
-    { id: 'gemini-2.5-pro-preview-06-05', name: 'Gemini 2.5 Pro', provider: 'GEMINI', isFree: false, contextLength: 1000000 },
-    { id: 'gpt-4o', name: 'GPT-4o', provider: 'OPENAI', isFree: false, contextLength: 128000 },
+    // Gemini
+    { id: 'gemini-3-flash-preview', name: 'Gemini 1.5 Flash (Preview)', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
+    { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 1.5 Flash (0520)', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
+    { id: 'gemini-2.5-pro-preview-06-05', name: 'Gemini 1.5 Pro (0605)', provider: 'GEMINI', isFree: false, contextLength: 1000000 },
+
+    // OpenAI
+    { id: 'gpt-4o', name: 'GPT-4o (Omni)', provider: 'OPENAI', isFree: false, contextLength: 128000 },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OPENAI', isFree: false, contextLength: 128000 },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'OPENAI', isFree: false, contextLength: 128000 },
+    { id: 'gpt-4', name: 'GPT-4 Standard', provider: 'OPENAI', isFree: false, contextLength: 8192 },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'OPENAI', isFree: false, contextLength: 16385 },
+    { id: 'o1-preview', name: 'OpenAI o1 Preview', provider: 'OPENAI', isFree: false, contextLength: 128000 },
+    { id: 'o1-mini', name: 'OpenAI o1 Mini', provider: 'OPENAI', isFree: false, contextLength: 128000 },
+    { id: 'o3-mini', name: 'OpenAI o3 Mini', provider: 'OPENAI', isFree: false, contextLength: 200000 },
 ];
 
 // OpenRouter cache

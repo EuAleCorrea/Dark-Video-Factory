@@ -6,14 +6,33 @@ import { PersistenceService } from "./PersistenceService";
 import { ChannelProfile, StageDataMap } from "../types";
 import { pcmToWav, getAudioDuration } from "../lib/audioUtils";
 import { saveAudio } from "./AudioStorageService";
+import { compressProjectAudio } from "./AudioCompressService";
+
+export interface PromptPreviewRequest {
+    stage: 'P1' | 'P2';
+    stageLabel: string;
+    modelId: string;
+    provider: string;
+    isCustomPrompt: boolean;
+    systemPrompt: string;
+    userPrompt: string;
+    inputLength: number;
+}
 
 export class PipelineExecutor {
+    private onPromptPreview: ((data: PromptPreviewRequest) => Promise<boolean>) | null = null;
+
     constructor(
         private projectService: ProjectService,
         private persistence: PersistenceService,
         private getConfig: () => EngineConfig,
         private getProfile: (channelId: string) => ChannelProfile | undefined
     ) { }
+
+    /** Registra callback para debug visual de prompts. Retorna true=prosseguir, false=cancelar */
+    setPromptPreview(cb: ((data: PromptPreviewRequest) => Promise<boolean>) | null) {
+        this.onPromptPreview = cb;
+    }
 
     async processProject(project: VideoProject): Promise<VideoProject | void> {
         try {
@@ -33,16 +52,33 @@ export class PipelineExecutor {
                     return await this.processScriptStage(project, profile, config);
                 case PipelineStage.AUDIO:
                     return await this.processAudioStage(project, profile, config);
+                case PipelineStage.AUDIO_COMPRESS:
+                    return await this.processAudioCompressStage(project);
                 default:
                     console.log(`No auto-process defined for stage ${project.currentStage}`);
                     await this.projectService.updateProject(project.id, { status: "ready" });
                     break;
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error(`Pipeline execution failed for project ${project.id}:`, error);
+
+            let detailedError = String(error);
+            if (error instanceof Error) {
+                // Se for um erro padrão do JS, tenta pegar a stack mas limpa para não ficar gigante
+                detailedError = `${error.message}${error.stack ? `\n\nStack Trace:\n${error.stack.split('\n').slice(0, 5).join('\n')}` : ''}`;
+            } else if (typeof error === 'object' && error !== null) {
+                try {
+                    detailedError = JSON.stringify(error, null, 2);
+                } catch {
+                    detailedError = String(error);
+                }
+            }
+
+            const finalMessage = `Erro no estágio ${project.currentStage}: ${detailedError}`;
+
             await this.projectService.updateProject(project.id, {
                 status: "error",
-                errorMessage: String(error),
+                errorMessage: finalMessage,
             });
         }
     }
@@ -68,13 +104,28 @@ export class PipelineExecutor {
             const { transcribeVideo } = await import("../lib/youtubeMock");
             const result = await transcribeVideo(referenceData.videoId, apifyKey);
             transcript = result.transcript?.trim() || '';
+            const apifyMetadata = result.metadata;
             console.log(`[Pipeline] 📝 APIFY retornou transcript com ${transcript.length} chars`);
+            console.log(`[Pipeline] 📦 APIFY metadata keys:`, apifyMetadata ? Object.keys(apifyMetadata) : 'NENHUM');
 
             if (transcript) {
+                const enrichedReference = {
+                    ...referenceData,
+                    transcript,
+                    description: apifyMetadata?.description || referenceData.description,
+                    viewCount: apifyMetadata?.viewCount || referenceData.viewCount,
+                    duration: apifyMetadata?.duration || referenceData.duration,
+                    apifyRawData: apifyMetadata || undefined,
+                };
+
+                // CRÍTICO: Atualiza o objeto em memória para que saves subsequentes não sobrescrevam com dados antigos
+                project.stageData.reference = enrichedReference;
+
+                console.log(`[Pipeline] 💾 Salvando reference enriquecida no Supabase...`);
                 await this.projectService.updateProject(project.id, {
                     stageData: {
                         ...project.stageData,
-                        reference: { ...referenceData, transcript }
+                        reference: enrichedReference
                     }
                 });
             }
@@ -84,20 +135,18 @@ export class PipelineExecutor {
             throw new Error("Transcrição não encontrada. O vídeo pode não ter legendas habilitadas, ou o ator APIFY retornou vazio.");
         }
 
-        console.log(`[Pipeline] ✅ Transcrição obtida (${transcript.length} chars). Aguardando aprovação do usuário.`);
+        console.log(`[Pipeline] ✅ Transcrição obtida. Definindo status para 'review'...`);
 
+        // Agora o project.stageData.reference já está atualizado (enriquecido)
         await this.projectService.updateProject(project.id, {
             status: 'review',
-            stageData: {
-                ...project.stageData,
-                reference: { ...referenceData, transcript }
-            }
+            stageData: project.stageData
         });
 
         return {
             ...project,
             status: 'review',
-            stageData: { ...project.stageData, reference: { ...referenceData, transcript } }
+            stageData: { ...project.stageData, reference: project.stageData.reference }
         };
     }
 
@@ -120,8 +169,8 @@ export class PipelineExecutor {
         }
 
         // Resolve model: channel-specific or global fallback
-        const modelId = profile.scriptingModel || 'gemini-3-flash-preview';
-        const provider = profile.scriptingProvider || config.providers.scripting || 'GEMINI';
+        const modelId = profile.scriptingModel || config.scriptingModel || 'gemini-3-flash-preview';
+        const provider = profile.scriptingProvider || config.scriptingProvider || config.providers.scripting || 'GEMINI';
 
         // Load active ChannelPrompt
         let rewritePrompt = '';
@@ -145,11 +194,75 @@ export class PipelineExecutor {
 
         // P1 — Reescrita Magnética
         console.log(`[Pipeline] ====== P1 — Reescrita via ${provider}/${modelId} ======`);
+
+        // Monta prompts para preview
+        const isCustomP1 = !!rewritePrompt;
+        const p1SystemPrompt = rewritePrompt || `Você é um reescritor profissional de roteiros para YouTube.
+Reescreva o texto mantendo a essência mas tornando-o mais magnético e envolvente.
+REGRAS:
+- Manter o mesmo tamanho aproximado
+- Otimizar para TTS (sem emojis, sem URLs, sem caracteres especiais)
+- Português do Brasil
+
+SAÍDA (JSON STRICT):
+{ "text": "texto reescrito completo...", "caracteres": 1234 }`;
+        const p1UserPrompt = `TRANSCRIÇÃO ORIGINAL:\n\n${transcript}`;
+
+        // DEBUG: Preview antes de enviar P1
+        if (this.onPromptPreview) {
+            const proceed = await this.onPromptPreview({
+                stage: 'P1',
+                stageLabel: 'Reescrita Magnética',
+                modelId,
+                provider,
+                isCustomPrompt: isCustomP1,
+                systemPrompt: p1SystemPrompt,
+                userPrompt: p1UserPrompt,
+                inputLength: transcript.length,
+            });
+            if (!proceed) {
+                await this.projectService.updateProject(project.id, { status: 'ready' });
+                throw new Error('Pipeline cancelado pelo usuário no debug P1');
+            }
+        }
+
         const p1Result = await rewriteTranscript(transcript, rewritePrompt, modelId, provider, config);
         console.log(`[Pipeline] P1 concluído: ${p1Result.caracteres} caracteres`);
 
         // P2 — Estruturação Viral
         console.log(`[Pipeline] ====== P2 — Estruturação via ${provider}/${modelId} ======`);
+
+        const isCustomP2 = !!structurePrompt;
+        const p2SystemPrompt = structurePrompt || `Você é um especialista em YouTube SEO e viralização.
+Dado o roteiro abaixo, gere os metadados para um vídeo viral.
+
+SAÍDA (JSON STRICT):
+{
+  "title": "Título viral (máx 60 chars)",
+  "description": "Descrição SEO completa...",
+  "thumb_text": "TEXTO THUMBNAIL (máx 6 palavras, CAPS)",
+  "tags": ["tag1", "tag2", ...]
+}`;
+        const p2UserPrompt = `ROTEIRO:\n\n${p1Result.text}`;
+
+        // DEBUG: Preview antes de enviar P2
+        if (this.onPromptPreview) {
+            const proceed = await this.onPromptPreview({
+                stage: 'P2',
+                stageLabel: 'Estruturação Viral (SEO)',
+                modelId,
+                provider,
+                isCustomPrompt: isCustomP2,
+                systemPrompt: p2SystemPrompt,
+                userPrompt: p2UserPrompt,
+                inputLength: p1Result.text.length,
+            });
+            if (!proceed) {
+                await this.projectService.updateProject(project.id, { status: 'ready' });
+                throw new Error('Pipeline cancelado pelo usuário no debug P2');
+            }
+        }
+
         const p2Result = await structureScript(p1Result.text, structurePrompt, modelId, provider, config);
         console.log(`[Pipeline] P2 concluído: title="${p2Result.title}"`);
 
@@ -175,7 +288,16 @@ export class PipelineExecutor {
             mode: 'auto'
         };
 
-        return await this.projectService.advanceStage(project, { script: scriptData });
+        console.log(`[Pipeline] 💾 Salvando roteiro no Supabase...`);
+        console.log(`[Pipeline]   → text: ${scriptData.text.length} chars`);
+        console.log(`[Pipeline]   → title: "${scriptData.title}"`);
+        console.log(`[Pipeline]   → tags: ${scriptData.tags?.length || 0}`);
+        console.log(`[Pipeline]   → snapshot.model: ${snapshot.modelId}`);
+        console.log(`[Pipeline]   → snapshot.promptVersionId: ${snapshot.promptVersionId || '(default)'}`);
+
+        const result = await this.projectService.advanceStage(project, { script: scriptData });
+        console.log(`[Pipeline] ✅ Roteiro salvo e avançado para estágio: ${result.currentStage}`);
+        return result;
     }
 
     /**
@@ -240,5 +362,38 @@ export class PipelineExecutor {
         };
 
         return await this.projectService.advanceStage(project, { audio: audioData });
+    }
+
+    /**
+     * COMPACTAR ÁUDIO — FFmpeg WAV → MP3
+     * 1. Valida FFmpeg instalado
+     * 2. Lê WAV do IndexedDB
+     * 3. Comprime via FFmpeg (temp files no disco)
+     * 4. Salva MP3 no IndexedDB
+     * 5. Avança para estágio SUBTITLES
+     * 
+     * ⚠️ Usa temp files para evitar problemas com WAV grandes em memória
+     */
+    private async processAudioCompressStage(
+        project: VideoProject
+    ): Promise<VideoProject> {
+        console.log(`[Pipeline] ====== COMPRESSÃO DE ÁUDIO — FFmpeg ======`);
+
+        const result = await compressProjectAudio(project.id, (msg) => {
+            console.log(`[Pipeline] ${msg}`);
+        });
+
+        const compressData: StageDataMap['audio_compress'] = {
+            fileUrl: `idb://${result.compressedKey}`,
+            originalSize: result.originalSize,
+            compressedSize: result.compressedSize,
+            compressionRatio: result.compressionRatio,
+            format: result.format,
+            bitrate: result.bitrate,
+            mode: 'auto',
+        };
+
+        console.log(`[Pipeline] ✅ Compressão concluída: ${result.compressionRatio}% redução`);
+        return await this.projectService.advanceStage(project, { audio_compress: compressData });
     }
 }

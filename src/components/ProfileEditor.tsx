@@ -157,6 +157,8 @@ const ProfileEditor: React.FC<ProfileEditorProps> = ({ persistence, profiles, co
                     });
                 }
                 addNotification('success', 'Nova versão do prompt salva com sucesso!');
+            } else {
+                addNotification('error', 'Falha ao salvar prompt (Banco de Dados desconectado?)');
             }
         } catch (e) {
             console.error("Erro ao salvar prompt:", e);
@@ -191,10 +193,43 @@ const ProfileEditor: React.FC<ProfileEditorProps> = ({ persistence, profiles, co
         }
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!name) return;
+
+        const profileId = editingId === 'NEW' ? crypto.randomUUID() : editingId!;
+        let currentActivePromptId = promptVersions.find(p => p.isActive)?.id;
+
+        // Obter valores atuais (se existirem) para comparação
+        const activePromptVersion = promptVersions.find(p => p.isActive);
+        const currentP1 = activePromptVersion?.promptText || '';
+        const currentP2 = activePromptVersion?.structurePromptText || '';
+
+        const hasPromptChanges = newPromptText !== currentP1 || newStructurePromptText !== currentP2;
+
+        console.log(`[ProfileEditor] HandleSave - ID: ${profileId}, HasChanges: ${hasPromptChanges}`);
+
+        // LÓGICA DE CORREÇÃO: Salvar prompt se for NOVO ou se HOUVER MUDANÇAS no texto
+        if ((editingId === 'NEW' && newPromptText) || (hasPromptChanges && newPromptText)) {
+            console.log(`[ProfileEditor] Salvando nova versão de prompt. Motivo: ${editingId === 'NEW' ? 'Novo Perfil' : 'Alteração detectada'}`);
+
+            try {
+                const created = await persistence.createChannelPrompt(profileId, newPromptText, newStructurePromptText);
+                if (created) {
+                    currentActivePromptId = created.id;
+                    console.log("Prompt persistido com sucesso:", created.id);
+                    addNotification('success', 'Prompt salvo como nova versão automaticamente.');
+                } else {
+                    console.warn("createChannelPrompt falhou (null).");
+                    addNotification('error', 'Aviso: Texto do prompt pode não ter sido salvo (verifique logs).');
+                }
+            } catch (e) {
+                console.error("Erro crítico ao salvar prompt:", e);
+                addNotification('error', 'Erro ao salvar versão do prompt.');
+            }
+        }
+
         const newProfile: ChannelProfile = {
-            id: editingId === 'NEW' ? crypto.randomUUID() : editingId!,
+            id: profileId,
             name,
             format,
             llmPersona: '',
@@ -203,13 +238,13 @@ const ProfileEditor: React.FC<ProfileEditorProps> = ({ persistence, profiles, co
             bgmTheme: bgm,
             subtitleStyle: subs,
             youtubeCredentials: ytConnected,
-            activePromptId: promptVersions.find(p => p.isActive)?.id,
+            activePromptId: currentActivePromptId,
             scriptingModel: selectedModel || undefined,
             scriptingProvider: selectedProvider || undefined,
         };
         onSave(newProfile);
         setEditingId(null);
-        addNotification('success', 'Perfil salvo com sucesso!');
+        addNotification('success', 'Perfil atualizado!');
     };
 
     const toggleYoutubeConnection = () => {
@@ -343,12 +378,28 @@ const ProfileEditor: React.FC<ProfileEditorProps> = ({ persistence, profiles, co
                                     onChange={e => handleModelChange(e.target.value)}
                                     disabled={isLoadingModels}
                                 >
-                                    <option value="">Padrão do Motor (Gemini Flash)</option>
-                                    {availableModels.map(m => (
-                                        <option key={m.id} value={m.id}>
-                                            {m.isFree ? '🆓 ' : '💰 '}{m.name} ({m.provider})
-                                        </option>
-                                    ))}
+                                    <option value="">Padrão do Motor (Seguir Configuração Global)</option>
+                                    <optgroup label="Google Gemini">
+                                        {availableModels.filter(m => m.provider === 'GEMINI').map(m => (
+                                            <option key={m.id} value={m.id}>
+                                                {m.isFree ? '🆓 ' : '💰 '}{m.name}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                    <optgroup label="OpenAI">
+                                        {availableModels.filter(m => m.provider === 'OPENAI').map(m => (
+                                            <option key={m.id} value={m.id}>
+                                                💰 {m.name}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                    <optgroup label="OpenRouter (Claude/OSS)">
+                                        {availableModels.filter(m => m.provider === 'OPENROUTER').map(m => (
+                                            <option key={m.id} value={m.id}>
+                                                {m.isFree ? '🆓 ' : '💰 '}{m.name}
+                                            </option>
+                                        ))}
+                                    </optgroup>
                                 </select>
                                 {selectedModel && (
                                     <p className="text-[9px] text-blue-600 mt-1.5 font-mono">

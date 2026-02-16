@@ -78,11 +78,20 @@ export class PersistenceService {
 
   public async loadChannelPrompts(profileId: string): Promise<ChannelPrompt[]> {
     if (this.useCloud && this.supabase) {
+      console.log(`[Persistence] Carregando prompts para perfil: ${profileId}`);
       const { data, error } = await this.supabase
         .from('channel_prompts')
         .select('*')
         .eq('profile_id', profileId)
         .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("[Persistence] Erro Supabase loadChannelPrompts:", error);
+      }
+
+      if (data) {
+        console.log(`[Persistence] ${data.length} prompts encontrados.`);
+      }
 
       if (!error && data) {
         return data.map(row => ({
@@ -94,17 +103,25 @@ export class PersistenceService {
           createdAt: row.created_at
         }));
       }
+    } else {
+      console.warn("[Persistence] loadChannelPrompts ignorado: Cloud/Supabase inativo.");
     }
     return [];
   }
 
   public async createChannelPrompt(profileId: string, text: string, structureText: string = ''): Promise<ChannelPrompt | null> {
     if (this.useCloud && this.supabase) {
-      await this.supabase
+      console.log(`[Persistence] Criando prompt para ${profileId}. P1: ${text.length} chars, P2: ${structureText.length} chars`);
+
+      // Desativar anterioes
+      const { error: updateError } = await this.supabase
         .from('channel_prompts')
         .update({ is_active: false })
         .eq('profile_id', profileId);
 
+      if (updateError) console.error("[Persistence] Erro ao desativar prompts antigos:", updateError);
+
+      // Inserir novo
       const { data, error } = await this.supabase
         .from('channel_prompts')
         .insert({
@@ -116,11 +133,21 @@ export class PersistenceService {
         .select()
         .single();
 
-      if (!error && data) {
-        await this.supabase
+      if (error) {
+        console.error("[Persistence] ERRO AO CRIAR PROMPT:", error);
+        return null;
+      }
+
+      if (data) {
+        console.log("[Persistence] Prompt criado com sucesso:", data);
+
+        // Atualizar perfil
+        const { error: profileError } = await this.supabase
           .from('profiles')
           .update({ active_prompt_id: data.id })
           .eq('id', profileId);
+
+        if (profileError) console.error("[Persistence] Erro ao vincular prompt ao perfil:", profileError);
 
         return {
           id: data.id,
@@ -131,6 +158,8 @@ export class PersistenceService {
           createdAt: data.created_at
         };
       }
+    } else {
+      console.error("[Persistence] createChannelPrompt falhou: Supabase não inicializado.");
     }
     return null;
   }

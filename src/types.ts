@@ -48,6 +48,7 @@ export interface ChannelProfile {
 export interface ReferenceVideo {
   id: string;
   title: string;
+  channelName: string;
   thumbnailUrl: string;
   views: string;
   duration: string;
@@ -158,6 +159,8 @@ export interface EngineConfig {
     image: 'GEMINI' | 'FLUX';
     tts: 'GEMINI' | 'ELEVENLABS';
   };
+  scriptingModel?: string;
+  scriptingProvider?: 'GEMINI' | 'OPENAI' | 'OPENROUTER';
   apiKeys: {
     gemini: string;
     youtube?: string;
@@ -202,6 +205,7 @@ export interface ReferenceStageData {
   viewCount?: number;
   publishedAt?: string;
   duration?: string;
+  apifyRawData?: Record<string, unknown>;  // Resposta bruta completa do APIFY
   mode: 'auto' | 'manual';
 }
 
@@ -229,6 +233,10 @@ export interface AudioCompressStageData {
   fileUrl: string;
   originalSize?: number;
   compressedSize?: number;
+  format?: string;
+  bitrate?: number;
+  duration?: number;
+  compressionRatio?: number;
   mode: 'auto' | 'manual';
 }
 
@@ -328,3 +336,41 @@ export const STAGE_META: Record<PipelineStage, StageMeta> = {
   [PipelineStage.THUMBNAIL]: { label: 'Thumbnail', shortLabel: 'Thumb', icon: 'ImagePlus', color: '#0EA5E9', bgColor: '#F0F9FF' },
   [PipelineStage.PUBLISH_THUMB]: { label: 'Publicar Thumb', shortLabel: 'PubTh', icon: 'UploadCloud', color: '#10B981', bgColor: '#ECFDF5' },
 };
+
+// =============================================
+// ELEVEN LABS TYPES
+// =============================================
+
+export interface ElevenLabsVoice {
+  voice_id: string;
+  name: string;
+  samples: { sample_id: string; file_url: string }[];
+  category: string;
+  labels: Record<string, string>;
+  preview_url: string;
+  settings?: ElevenLabsSettings;
+}
+
+export interface ElevenLabsSettings {
+  stability: number;
+  similarity_boost: number;
+  style?: number;
+  use_speaker_boost?: boolean;
+}
+
+export interface ElevenLabsModel {
+  model_id: string;
+  name: string;
+  description: string;
+  languages: { language_id: string; name: string }[];
+}
+
+export interface ElevenLabsUser {
+  subscription: {
+    tier: string;
+    character_count: number;
+    character_limit: number;
+    next_character_count_reset_unix: number;
+  };
+  is_onboarding_completed: boolean;
+}

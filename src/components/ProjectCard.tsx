@@ -12,6 +12,8 @@ interface ProjectCardProps {
     onToggleSelect: () => void;
     onClick: () => void;
     onDelete: () => void;
+    onStageClick?: (project: VideoProject, stage: PipelineStage) => void;
+    onViewError?: (project: VideoProject) => void;
 }
 
 const STATUS_CONFIG: Record<string, { icon: any; label: string; color: string; bg: string }> = {
@@ -84,7 +86,7 @@ function getCompletedStages(project: VideoProject): PipelineStage[] {
     return PIPELINE_STAGES_ORDER.slice(0, currentIdx);
 }
 
-export default function ProjectCard({ project, stageMeta, isSelected, onToggleSelect, onClick, onDelete }: ProjectCardProps) {
+export default function ProjectCard({ project, stageMeta, isSelected, onToggleSelect, onClick, onDelete, onStageClick, onViewError }: ProjectCardProps) {
     const effectiveStatus = getEffectiveStatus(project);
     const statusConf = STATUS_CONFIG[effectiveStatus] || STATUS_CONFIG.waiting;
     const StatusIcon = statusConf.icon;
@@ -133,8 +135,14 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
             {/* Footer: Status + Date */}
             <div className="flex items-center justify-between">
                 <div
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium"
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium cursor-help"
                     style={{ backgroundColor: statusConf.bg, color: statusConf.color }}
+                    onClick={(e) => {
+                        if (project.status === 'error' && onViewError) {
+                            e.stopPropagation();
+                            onViewError(project);
+                        }
+                    }}
                 >
                     <StatusIcon className={`w-3.5 h-3.5 ${project.status === 'processing' ? 'animate-spin' : ''}`} />
                     {statusConf.label}
@@ -168,7 +176,10 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
                     return (
                         <button
                             key={stage}
-                            onClick={(e) => { e.stopPropagation(); /* TODO: popup de detalhamento */ }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (onStageClick) onStageClick(project, stage);
+                            }}
                             className="p-1.5 rounded-md text-emerald-500 bg-emerald-50 hover:bg-emerald-100 transition-colors"
                             title={stageInfo.tooltip}
                         >
@@ -180,7 +191,20 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
 
             {/* Error message */}
             {project.status === 'error' && project.errorMessage && (
-                <p className="mt-2 text-sm text-red-500 line-clamp-1">{project.errorMessage}</p>
+                <div
+                    className="mt-2 text-sm text-red-500 hover:text-red-600 cursor-pointer transition-colors group/error"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (onViewError) onViewError(project);
+                    }}
+                >
+                    <p className="line-clamp-2 leading-tight italic">
+                        {project.errorMessage}
+                    </p>
+                    <span className="text-[10px] font-bold uppercase mt-1.5 flex items-center gap-1 opacity-60 group-hover/error:opacity-100 transition-opacity">
+                        <AlertTriangle size={10} /> Ver log completo e opções →
+                    </span>
+                </div>
             )}
         </div>
     );

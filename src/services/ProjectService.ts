@@ -21,6 +21,7 @@ export class ProjectService {
         };
 
         if (isSupabaseConfigured()) {
+            console.log(`[ProjectService] Tentando salvar projeto ${project.id} no Supabase...`);
             const { error } = await getSupabase()
                 .from(TABLE)
                 .insert({
@@ -33,7 +34,13 @@ export class ProjectService {
                     created_at: project.createdAt,
                     updated_at: project.updatedAt,
                 });
-            if (error) console.error('[ProjectService] Insert error:', error);
+            if (error) {
+                console.error('[ProjectService] ❌ Erro ao inserir no Supabase:', error);
+            } else {
+                console.log('[ProjectService] ✅ Projeto salvo com sucesso no Supabase.');
+            }
+        } else {
+            console.warn('[ProjectService]⚠️ Supabase não configurado. Salvando apenas localmente.');
         }
 
         // Always save locally too
@@ -43,22 +50,62 @@ export class ProjectService {
 
     // ─── READ ALL ────────────────────────────────────────────
     async loadProjects(channelId?: string): Promise<VideoProject[]> {
+        let projects: VideoProject[] = [];
+
+        // 1. Tenta carregar do Supabase
         if (isSupabaseConfigured()) {
             try {
+                console.log('[ProjectService] Carregando projetos do Supabase...');
                 let query = getSupabase().from(TABLE).select('*').order('created_at', { ascending: false });
                 if (channelId) query = query.eq('channel_id', channelId);
                 const { data, error } = await query;
                 if (error) throw error;
                 if (data && data.length > 0) {
-                    const projects = data.map(this.mapFromDb);
-                    this.saveAllLocal(projects);
-                    return projects;
+                    console.log(`[ProjectService] ${data.length} projetos carregados da nuvem.`);
+                    projects = data.map(this.mapFromDb);
+                } else {
+                    console.log('[ProjectService] Nenhum projeto encontrado na nuvem.');
                 }
             } catch (e) {
                 console.warn('[ProjectService] Cloud load failed, using local:', e);
             }
         }
-        return this.loadLocal(channelId);
+
+        // 2. Fallback local se vazio
+        if (projects.length === 0) {
+            projects = this.loadLocal(channelId);
+            console.log(`[ProjectService] ${projects.length} projetos carregados localmente.`);
+        }
+
+        // 3. Sanity Check: Resetar 'processing' órfãos (travados por restart/crash)
+        let hasFixes = false;
+        projects = projects.map(p => {
+            if (p.status === 'processing') {
+                console.warn(`[ProjectService] Resetando projeto travado em processing: ${p.id}`);
+                hasFixes = true;
+                return {
+                    ...p,
+                    status: 'error',
+                    errorMessage: 'Processamento interrompido (app reiniciado ou fechado durante execução). Tente novamente.'
+                };
+            }
+            return p;
+        });
+
+        // 4. Persistir correções se houve
+        if (hasFixes) {
+            this.saveAllLocal(projects);
+            // Atualizar no Supabase em background se possível
+            if (isSupabaseConfigured()) {
+                projects.filter(p => p.status === 'error' && p.errorMessage?.includes('interrompido'))
+                    .forEach(p => this.updateProject(p.id, {
+                        status: 'error',
+                        errorMessage: p.errorMessage
+                    }).catch(err => console.error('Falha ao atualizar status de erro no Supabase:', err)));
+            }
+        }
+
+        return projects;
     }
 
     // ─── UPDATE ──────────────────────────────────────────────
@@ -74,7 +121,12 @@ export class ProjectService {
             if (updates.errorMessage !== undefined) dbUpdates.error_message = updates.errorMessage;
 
             const { error } = await getSupabase().from(TABLE).update(dbUpdates).eq('id', id);
-            if (error) console.error('[ProjectService] Update error:', error);
+            if (error) {
+                console.error('[ProjectService] ❌ Update error Supabase:', error);
+            } else if (updates.stageData) {
+                const savedKeys = Object.keys(updates.stageData).filter(k => (updates.stageData as any)[k]);
+                console.log(`[ProjectService] ☁️ Supabase OK — stage_data keys: [${savedKeys.join(', ')}]`);
+            }
         }
 
         // Update local — sanitize large binary data from stageData before saving
@@ -114,11 +166,16 @@ export class ProjectService {
             throw new Error('Projeto já está no último estágio');
         }
 
+        const mergedStageData = { ...project.stageData, ...stageData };
+        const stageKeys = Object.keys(mergedStageData).filter(k => mergedStageData[k as keyof StageDataMap]);
+        console.log(`[ProjectService] advanceStage: ${project.currentStage} → ${nextStage}`);
+        console.log(`[ProjectService]   → stageData keys being saved: [${stageKeys.join(', ')}]`);
+
         const updatedProject: VideoProject = {
             ...project,
             currentStage: nextStage,
             status: 'ready',
-            stageData: { ...project.stageData, ...stageData },
+            stageData: mergedStageData,
             errorMessage: undefined,
             updatedAt: new Date().toISOString(),
         };
@@ -130,6 +187,7 @@ export class ProjectService {
             errorMessage: undefined,
         });
 
+        console.log(`[ProjectService] ✅ advanceStage concluído. Projeto ${project.id} agora em '${nextStage}'.`);
         return updatedProject;
     }
 

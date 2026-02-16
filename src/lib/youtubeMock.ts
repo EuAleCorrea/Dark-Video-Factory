@@ -59,7 +59,8 @@ export const searchChannelVideos = async (channelQuery: string, apiKey?: string)
         }
 
         const channelId = searchData.items[0].id.channelId;
-        console.log("Channel Found:", channelId, searchData.items[0].snippet.title);
+        const channelTitle = searchData.items[0].snippet.title; // Captura o nome real do canal
+        console.log("Channel Found:", channelId, channelTitle);
 
         // 2. Get Recent Videos
         const videosUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&order=date&maxResults=9&type=video&key=${apiKey}`;
@@ -87,6 +88,7 @@ export const searchChannelVideos = async (channelQuery: string, apiKey?: string)
                 return {
                     id: item.id.videoId,
                     title: item.snippet.title,
+                    channelName: channelTitle, // <--- Aqui o nome do canal agora é preservado
                     thumbnailUrl: item.snippet.thumbnails.medium.url,
                     publishedAt: formatDate(item.snippet.publishedAt),
                     views: detail ? formatViews(detail.statistics.viewCount) : 'N/A',

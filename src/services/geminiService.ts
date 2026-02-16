@@ -57,17 +57,25 @@ const callLLM = async (
     const ai = getGeminiClient(apiKey);
     console.log(`[LLM Router] → Gemini Direct (${modelId})`);
 
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: `${systemPrompt}\n\n${userPrompt}`,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    try {
+      const response = await ai.models.generateContent({
+        model: modelId,
+        contents: `${systemPrompt}\n\n${userPrompt}`,
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
 
-    const text = response.text;
-    if (!text) throw new Error("Resposta vazia do Gemini");
-    return text;
+      const text = response.text;
+      if (!text) throw new Error("Resposta vazia do Gemini");
+      return text;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
+        throw new Error(`Erro de conexão com Gemini (Failed to fetch). Verifique sua internet, firewall ou se a API Key é válida.`);
+      }
+      throw err;
+    }
   }
 
   // --- OPENAI ---
@@ -182,6 +190,7 @@ export const rewriteTranscript = async (
 
   console.log(`[Pipeline] P1 — Reescrita via ${provider}/${modelId}...`);
 
+  const isCustom = !!customPrompt;
   const systemPrompt = customPrompt || `Você é um reescritor profissional de roteiros para YouTube.
 Reescreva o texto mantendo a essência mas tornando-o mais magnético e envolvente.
 REGRAS:
@@ -217,6 +226,7 @@ export const structureScript = async (
 
   console.log(`[Pipeline] P2 — Estruturação via ${provider}/${modelId}...`);
 
+  const isCustom = !!customPrompt;
   const systemPrompt = customPrompt || `Você é um especialista em YouTube SEO e viralização.
 Dado o roteiro abaixo, gere os metadados para um vídeo viral.
 
@@ -391,9 +401,13 @@ export const generateVideoScriptAndPrompts = async (
     if (!text) throw new Error("Resposta vazia do Gemini");
     return JSON.parse(text);
 
-  } catch (error) {
-    console.error("Erro na Geração de Roteiro:", error);
-    throw error;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
+      throw new Error(`Erro de conexão com Gemini (Failed to fetch). Verifique sua internet, firewall ou se a API Key é válida.`);
+    }
+    console.error("Erro na Geração de Roteiro:", err);
+    throw err;
   }
 };
 
@@ -421,25 +435,33 @@ export const generateVideoMetadata = async (
     - 1 Prompt de Thumbnail (Inglês, estilo: ${profile.visualStyle})
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          titles: { type: Type.ARRAY, items: { type: Type.STRING } },
-          description: { type: Type.STRING },
-          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-          thumbnailPrompt: { type: Type.STRING }
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            titles: { type: Type.ARRAY, items: { type: Type.STRING } },
+            description: { type: Type.STRING },
+            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            thumbnailPrompt: { type: Type.STRING }
+          }
         }
       }
-    }
-  });
+    });
 
-  if (!response.text) throw new Error("Falha ao gerar metadados");
-  return JSON.parse(response.text);
+    if (!response.text) throw new Error("Falha ao gerar metadados");
+    return JSON.parse(response.text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
+      throw new Error(`Erro de conexão com Gemini (Metadados). Verifique sua internet.`);
+    }
+    throw err;
+  }
 };
 
 /**

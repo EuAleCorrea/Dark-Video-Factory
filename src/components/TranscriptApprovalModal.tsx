@@ -181,9 +181,16 @@ const TranscriptApprovalModal: React.FC<TranscriptApprovalModalProps> = ({ proje
                                         <h4 className="text-sm font-semibold text-[#0F172A] line-clamp-1">
                                             {item.project.title}
                                         </h4>
-                                        {channelName && (
-                                            <p className="text-xs text-[#94A3B8]">{channelName}</p>
-                                        )}
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                            {channelName && (
+                                                <p className="text-xs text-[#94A3B8]">{channelName}</p>
+                                            )}
+                                            {item.metadata?._apifyAccount && (
+                                                <span className="text-[10px] font-mono bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                                                    @{item.metadata._apifyAccount}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
 
                                     {/* Status Badge */}
