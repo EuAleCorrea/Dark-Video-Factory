@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { ChannelProfile, EngineConfig, VideoFormat, VideoMetadata } from "../types";
+import { withGeminiKeyRotation } from "../lib/geminiKeyManager";
 
 // --- CLIENT FACTORY ---
 const getGeminiClient = (apiKey: string) => new GoogleGenAI({ apiKey });
@@ -50,32 +51,32 @@ const callLLM = async (
     effectiveProvider = 'GEMINI';
   }
 
-  // --- GEMINI (direto via SDK) ---
+  // --- GEMINI (direto via SDK) — com rotação de chaves ---
   if (effectiveProvider === 'GEMINI') {
-    const apiKey = config.apiKeys.gemini;
-    if (!apiKey) throw new Error("Chave da API Gemini não encontrada.");
-    const ai = getGeminiClient(apiKey);
-    console.log(`[LLM Router] → Gemini Direct (${modelId})`);
+    return withGeminiKeyRotation(config.apiKeys.gemini, async (apiKey, keyIdx, totalKeys) => {
+      const ai = getGeminiClient(apiKey);
+      console.log(`[LLM Router] → Gemini Direct (${modelId})${totalKeys > 1 ? ` [chave ${keyIdx + 1}/${totalKeys}]` : ''}`);
 
-    try {
-      const response = await ai.models.generateContent({
-        model: modelId,
-        contents: `${systemPrompt}\n\n${userPrompt}`,
-        config: {
-          responseMimeType: "application/json",
-        },
-      });
+      try {
+        const response = await ai.models.generateContent({
+          model: modelId,
+          contents: `${systemPrompt}\n\n${userPrompt}`,
+          config: {
+            responseMimeType: "application/json",
+          },
+        });
 
-      const text = response.text;
-      if (!text) throw new Error("Resposta vazia do Gemini");
-      return text;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
-        throw new Error(`Erro de conexão com Gemini (Failed to fetch). Verifique sua internet, firewall ou se a API Key é válida.`);
+        const text = response.text;
+        if (!text) throw new Error("Resposta vazia do Gemini");
+        return text;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
+          throw new Error(`Erro de conexão com Gemini (Failed to fetch). Verifique sua internet, firewall ou se a API Key é válida.`);
+        }
+        throw err;
       }
-      throw err;
-    }
+    });
   }
 
   // --- OPENAI ---
@@ -373,42 +374,44 @@ export const generateVideoScriptAndPrompts = async (
     }
   }
 
-  // --- ROTA GEMINI (PADRÃO / FALLBACK) ---
-  const apiKey = config?.apiKeys.gemini;
-  if (!apiKey) throw new Error("Chave da API Gemini não encontrada. Configure-a em Configurações.");
+  // --- ROTA GEMINI (PADRÃO / FALLBACK) — com rotação de chaves ---
+  const geminiField = config?.apiKeys.gemini;
+  if (!geminiField) throw new Error("Chave da API Gemini não encontrada. Configure-a em Configurações.");
 
-  const ai = getGeminiClient(apiKey);
-  console.log(`[Router] Despachando para Gemini 1.5 Flash...`);
+  return withGeminiKeyRotation(geminiField, async (apiKey, keyIdx, totalKeys) => {
+    const ai = getGeminiClient(apiKey);
+    console.log(`[Router] Despachando para Gemini 1.5 Flash...${totalKeys > 1 ? ` [chave ${keyIdx + 1}/${totalKeys}]` : ''}`);
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: systemPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            script: { type: Type.STRING },
-            visualPrompts: { type: Type.ARRAY, items: { type: Type.STRING } },
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: systemPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              script: { type: Type.STRING },
+              visualPrompts: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ["script", "visualPrompts"],
           },
-          required: ["script", "visualPrompts"],
         },
-      },
-    });
+      });
 
-    const text = response.text;
-    if (!text) throw new Error("Resposta vazia do Gemini");
-    return JSON.parse(text);
+      const text = response.text;
+      if (!text) throw new Error("Resposta vazia do Gemini");
+      return JSON.parse(text);
 
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
-      throw new Error(`Erro de conexão com Gemini (Failed to fetch). Verifique sua internet, firewall ou se a API Key é válida.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
+        throw new Error(`Erro de conexão com Gemini (Failed to fetch). Verifique sua internet, firewall ou se a API Key é válida.`);
+      }
+      console.error("Erro na Geração de Roteiro:", err);
+      throw err;
     }
-    console.error("Erro na Geração de Roteiro:", err);
-    throw err;
-  }
+  });
 };
 
 /**
@@ -420,9 +423,8 @@ export const generateVideoMetadata = async (
   finalScript: string,
   config?: EngineConfig
 ): Promise<VideoMetadata> => {
-  const apiKey = config?.apiKeys.gemini;
-  if (!apiKey) throw new Error("API Key missing");
-  const ai = getGeminiClient(apiKey);
+  const geminiField = config?.apiKeys.gemini;
+  if (!geminiField) throw new Error("API Key missing");
 
   const prompt = `
     Analise este roteiro e gere metadados para YouTube (PT-BR).
@@ -435,33 +437,37 @@ export const generateVideoMetadata = async (
     - 1 Prompt de Thumbnail (Inglês, estilo: ${profile.visualStyle})
   `;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            titles: { type: Type.ARRAY, items: { type: Type.STRING } },
-            description: { type: Type.STRING },
-            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-            thumbnailPrompt: { type: Type.STRING }
+  return withGeminiKeyRotation(geminiField, async (apiKey) => {
+    const ai = getGeminiClient(apiKey);
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              titles: { type: Type.ARRAY, items: { type: Type.STRING } },
+              description: { type: Type.STRING },
+              tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+              thumbnailPrompt: { type: Type.STRING }
+            }
           }
         }
-      }
-    });
+      });
 
-    if (!response.text) throw new Error("Falha ao gerar metadados");
-    return JSON.parse(response.text);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
-      throw new Error(`Erro de conexão com Gemini (Metadados). Verifique sua internet.`);
+      if (!response.text) throw new Error("Falha ao gerar metadados");
+      return JSON.parse(response.text);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
+        throw new Error(`Erro de conexão com Gemini (Metadados). Verifique sua internet.`);
+      }
+      throw err;
     }
-    throw err;
-  }
+  });
 };
 
 /**
@@ -477,30 +483,32 @@ export const generateImage = async (prompt: string, aspectRatio: "16:9" | "9:16"
     // Como não temos proxy real aqui, usamos Gemini mas logamos como se fosse Flux para a demo
   }
 
-  // ROTA GEMINI IMAGEN
-  const apiKey = config?.apiKeys.gemini;
-  if (!apiKey) return undefined;
+  // ROTA GEMINI IMAGEN — com rotação de chaves
+  const geminiField = config?.apiKeys.gemini;
+  if (!geminiField) return undefined;
 
-  const ai = getGeminiClient(apiKey);
+  return withGeminiKeyRotation(geminiField, async (apiKey) => {
+    const ai = getGeminiClient(apiKey);
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: { parts: [{ text: prompt }] },
-      config: {
-        imageConfig: { aspectRatio: aspectRatio }
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [{ text: prompt }] },
+        config: {
+          imageConfig: { aspectRatio: aspectRatio }
+        }
+      });
+
+      const part = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+      if (part?.inlineData) {
+        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
       }
-    });
-
-    const part = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-    if (part?.inlineData) {
-      return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      return undefined;
+    } catch (error) {
+      console.error("Erro na Geração de Imagem:", error);
+      throw error; // Propaga para rotação tentar próxima chave
     }
-    return undefined;
-  } catch (error) {
-    console.error("Erro na Geração de Imagem:", error);
-    return undefined;
-  }
+  });
 };
 
 /**
@@ -514,51 +522,55 @@ export const generateSpeech = async (text: string, voiceId: string = 'Kore', con
     console.warn("[TTS] ElevenLabs selecionado mas não implementado. Fallback para Gemini.");
   }
 
-  // ROTA GEMINI TTS
-  const apiKey = config?.apiKeys.gemini;
-  if (!apiKey) throw new Error("API Key do Gemini não configurada. Vá em Configurações.");
-  const ai = getGeminiClient(apiKey);
+  // ROTA GEMINI TTS — com rotação de chaves
+  const geminiField = config?.apiKeys.gemini;
+  if (!geminiField) throw new Error("API Key do Gemini não configurada. Vá em Configurações.");
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      if (attempt > 0) {
-        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(`[TTS] ⏳ Retry ${attempt}/${MAX_RETRIES} em ${delay}ms...`);
-        await sleep(delay);
-      }
+  return withGeminiKeyRotation(geminiField, async (apiKey, keyIdx, totalKeys) => {
+    const ai = getGeminiClient(apiKey);
 
-      console.log(`[TTS] 🎙️ Gerando áudio via Gemini TTS (voz: ${voiceId})${attempt > 0 ? ` [tentativa ${attempt + 1}]` : ''}...`);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(`[TTS] ⏳ Retry ${attempt}/${MAX_RETRIES} em ${delay}ms...`);
+          await sleep(delay);
+        }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text }] }],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: voiceId },
+        console.log(`[TTS] 🎙️ Gerando áudio via Gemini TTS (voz: ${voiceId})${totalKeys > 1 ? ` [chave ${keyIdx + 1}/${totalKeys}]` : ''}${attempt > 0 ? ` [tentativa ${attempt + 1}]` : ''}...`);
+
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash-preview-tts",
+          contents: [{ parts: [{ text }] }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: voiceId },
+              },
             },
           },
-        },
-      });
+        });
 
-      const audioPart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-      const audioData = audioPart?.inlineData?.data;
+        const audioPart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+        const audioData = audioPart?.inlineData?.data;
 
-      if (!audioData) {
-        console.error("[TTS] Resposta sem áudio:", response);
-        throw new Error("O Gemini não retornou dados de áudio.");
+        if (!audioData) {
+          console.error("[TTS] Resposta sem áudio:", response);
+          throw new Error("O Gemini não retornou dados de áudio.");
+        }
+
+        console.log(`[TTS] ✅ Áudio gerado com sucesso`);
+        return audioData;
+
+      } catch (error) {
+        if (attempt < MAX_RETRIES && isRetryableError(error)) {
+          continue;
+        }
+        console.error("[TTS] ❌ Erro final:", error);
+        throw error;
       }
-
-      console.log(`[TTS] ✅ Áudio gerado com sucesso`);
-      return audioData;
-
-    } catch (error) {
-      if (attempt < MAX_RETRIES && isRetryableError(error)) {
-        continue;
-      }
-      console.error("[TTS] ❌ Erro final:", error);
-      throw error;
     }
-  }
+    return undefined; // TypeScript safety
+  });
 };

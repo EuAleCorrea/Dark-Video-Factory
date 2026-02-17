@@ -1,6 +1,6 @@
 # Dark Video Factory — PRD (Product Requirements Document)
 
-> **Última atualização:** 2026-02-16 17:34
+> **Última atualização:** 2026-02-17 10:50
 > **Consulta obrigatória:** Este documento deve ser lido no início de cada sessão antes de qualquer implementação.
 
 ---
@@ -20,7 +20,7 @@
 | Storage | **localStorage** (projetos/config) + **IndexedDB** (áudio binário) |
 | AI/LLM | Google Gemini, OpenAI, OpenRouter (o1, o3, GPT-4o, etc.) |
 | TTS | Google Gemini TTS, ElevenLabs |
-| Imagens | Google Gemini Imagen, Flux |
+| Imagens | **RunWare** (Flux.1 Schnell), Google Gemini Imagen |
 | Transcrição | **APIFY** (`starvibe~youtube-video-transcript`) |
 | YouTube API | YouTube Data API v3 (busca de vídeos) |
 | Database | Supabase PostgreSQL (opcional, configuração dinâmica) |
@@ -45,7 +45,9 @@ App.tsx (42KB — componente raiz, orquestra tudo)
 ├── StageDetailsModal.tsx — Visualização detalhada de dados do estágio (Referência/Roteiro)
 │   └── VideoPlayerModal.tsx — Player de vídeo embedado via YouTube iFrame
 ├── ErrorDetailModal.tsx — Visualização profunda de logs de erro + Reset de estágio
+├── PromptDebugModal.tsx — Preview visual de prompts antes de enviar para IA (P1/P2)
 ├── BatchActionBar.tsx — Barra de ações em lote (processar, deletar)
+├── ImageGeneratorPanel.tsx — Interface de geração de imagens via RunWare (Flux.1 Schnell)
 ├── PreviewPlayer.tsx — Player de preview de vídeo
 ├── Storyboard.tsx — Visualização de segmentos do storyboard
 ├── JobQueue.tsx — Fila de jobs (sistema legado)
@@ -53,7 +55,8 @@ App.tsx (42KB — componente raiz, orquestra tudo)
 ├── SystemHealth.tsx — Status do sistema
 ├── AssetBrowser.tsx — Navegador de assets
 ├── DistributionPanel.tsx — Painel de distribuição
-└── ElevenLabsPanel.tsx — Interface dedicada para geração de áudio (Clone Visual Studio 3.0)
+├── ElevenLabsPanel.tsx — Interface dedicada para geração TTS via ElevenLabs (Clone Visual Studio 3.0)
+└── GoogleTTSPanel.tsx — Interface dedicada para geração TTS via Google Gemini
 ```
 
 ### 2.2 Fluxo de Dados
@@ -89,7 +92,7 @@ O coração do sistema é o **Pipeline Kanban** com 10 estágios sequenciais:
 | 3 | **Áudio** | `AUDIO` | Gerar narração TTS do roteiro | Auto (Gemini TTS / ElevenLabs) |
 | 4 | **Compactar** | `AUDIO_COMPRESS` | Comprimir áudio WAV → MP3 via FFmpeg | Auto (FFmpeg) |
 | 5 | **Legendas** | `SUBTITLES` | Gerar SRT a partir do áudio | 🔜 Não implementado |
-| 6 | **Imagens** | `IMAGES` | Gerar imagens por segmento via IA | 🔜 Não implementado |
+| 6 | **Imagens** | `IMAGES` | Gerar imagens por segmento via IA | ⚙️ Parcial (UI + RunWare) |
 | 7 | **Vídeo** | `VIDEO` | Renderizar vídeo com FFmpeg | 🔜 Não implementado |
 | 8 | **Publicar YT** | `PUBLISH_YT` | Upload para YouTube | 🔜 Não implementado |
 | 9 | **Thumbnail** | `THUMBNAIL` | Gerar thumbnail com IA | 🔜 Não implementado |
@@ -153,10 +156,13 @@ Orquestra o processamento automático de cada estágio. Possui captura enriqueci
 |--------|-----------|
 | `processProject(project)` | Entry point: roteia para o handler do estágio atual |
 | `processReferenceStage(project, config)` | Transcreve via APIFY, valida transcript |
-| `processScriptStage(project, profile, config)` | Executa P1 (Reescrita) + P2 (Estruturação) |
+| `processScriptStage(project, profile, config)` | Executa P1 (Reescrita) + P2 (Estruturação) com **debug visual** (PromptDebugModal) |
 | `processAudioStage(project, profile, config)` | Gera TTS, converte PCM→WAV, salva IndexedDB |
+| `processAudioCompressStage(project)` | Comprime WAV → MP3 via FFmpeg nativo |
 
 **Dependências injetadas:** `ProjectService`, `PersistenceService`, `getConfig()`, `getProfile()`
+
+**Debug de Prompts:** O executor suporta um callback `setPromptPreview()` que abre o `PromptDebugModal` antes de cada chamada LLM, permitindo inspeção do system/user prompt antes do envio.
 
 ### 4.3 GeminiService (`services/geminiService.ts`)
 
@@ -216,6 +222,150 @@ Serviço dedicado para interação com a API da Eleven Labs.
 | `getUserInfo()` | Obtém dados de assinatura e créditos restantes |
 | `generateAudio(text, voiceId, modelId, settings)` | Gera áudio e retorna Blob |
 
+### 4.10 GeminiService — TTS (`services/geminiService.ts`)
+
+Função `generateSpeech` usa o modelo dedicado `gemini-2.5-flash-preview-tts`.
+
+| Detalhe | Valor |
+|---------|-------|
+| Modelo | `gemini-2.5-flash-preview-tts` |
+| Formato de saída | PCM raw (24kHz, 16-bit, mono) |
+| Config | `responseModalities: ['AUDIO']`, `speechConfig.voiceConfig.prebuiltVoiceConfig` |
+| Vozes disponíveis | 30 vozes (Zephyr, Puck, Kore, Charon, Fenrir, Aoede, etc.) |
+
+### 4.11 RunwareService (`services/runwareService.ts`)
+
+Serviço para geração de imagens via API RunWare (Flux.1 Schnell).
+
+| Função | Descrição |
+|--------|-----------|
+| `generateImageRunware(prompt, width, height, numberResults, apiKey)` | Gera imagens via Flux.1 Schnell, retorna array de URLs |
+
+| Detalhe | Valor |
+|---------|-------|
+| Modelo | `runware:100@1` (Flux.1 Schnell) |
+| Steps | 4 (otimizado para velocidade) |
+| Scheduler | `FlowMatchEulerDiscreteScheduler` |
+| Formato de saída | JPEG via URL |
+| CFGScale | 1 |
+
+### 4.12 Image Providers — Arquitetura Escalável (`services/imageProviders.ts`)
+
+Strategy Pattern + Registry para geração de imagens com múltiplos providers.
+
+| Interface/Tipo | Descrição |
+|----------------|-----------|
+| `IImageProvider` | Contrato comum: `generate(prompt, w, h, count, apiKey, onLog?)` |
+| `ImageModel` | Metadata: id, label, provider, apiKeyField, badge, description |
+| `IMAGE_MODELS[]` | Registry central de modelos disponíveis |
+
+**Providers implementados:**
+
+| Provider | Modelo | API Key Field | Detalhes |
+|----------|--------|---------------|----------|
+| `RunwareProvider` | FLUX.1 Schnell | `flux` | Delega para `runwareService.ts` |
+| `NanoBananaProvider` | Gemini 2.5 Flash Image | `gemini` | Usa `@google/genai`, rotação de chaves via `geminiKeyManager` |
+
+**Funções auxiliares:**
+
+| Função | Descrição |
+|--------|-----------|
+| `getImageProvider(modelId)` | Factory — retorna instância do provider correto |
+| `getImageModel(modelId)` | Busca metadata do modelo no registry |
+
+**Para adicionar novo modelo:** (1) criar classe `implements IImageProvider`, (2) add ao `IMAGE_MODELS[]`, (3) registrar no switch de `getImageProvider()`.
+
+### 4.13 Gemini Key Manager (`lib/geminiKeyManager.ts`)
+
+Gerenciamento de múltiplas chaves Gemini com rotação automática.
+
+| Função | Descrição |
+|--------|-----------|
+| `parseGeminiKeys(field)` | Separa chaves por `,`, `;` ou `\n` |
+| `maskGeminiKey(key)` | Máscara para exibição segura |
+| `isGeminiRetryableError(msg)` | Detecta erros de quota/rate limit (429, 403, etc.) |
+| `withGeminiKeyRotation(field, fn)` | Tenta `fn` com cada chave; rota se erro retryable |
+
+### ImageGeneratorPanel — Modal de Status (`components/ImageGeneratorPanel.tsx`)
+
+| Feature | Detalhes |
+|---------|----------|
+| Modelos | Dropdown dinâmico via `IMAGE_MODELS` registry |
+| Badge | Dinâmico (ex: "RunWare" / "Gemini") conforme modelo selecionado |
+| Modal de Status | Exibe logs em tempo real: chave tentada, quota esgotada, sucesso/erro |
+| Estados do Modal | `progress` (spinner + "Aguarde..."), `success` (verde), `error` (vermelho) |
+| Layout fixo | Header + Logs (h-300px scroll) + Footer permanecem com tamanho constante |
+| Callback `onLog` | Providers enviam logs para o modal via callback opcional |
+
+### 4.12 ReferenceService (`services/ReferenceService.ts`)
+
+Fachada para busca de vídeos de referência e transcrição.
+
+| Método | Descrição |
+|--------|-----------|
+| `fetchTopReferenceVideo(channelQuery, config)` | Busca o vídeo mais recente/relevante de um canal |
+| `transcribeReference(videoId, config)` | Transcreve via APIFY (wrapper do apifyClient) |
+| `log(jobId, message, level)` | Log auxiliar para o Supabase |
+
+### 4.13 SystemMonitor (`services/SystemMonitor.ts`)
+
+Simula telemetria de hardware (CPU, RAM, GPU, temperatura). Reage ao status dos jobs para simular picos de carga.
+
+---
+
+## 4.14 Componentes TTS — UI e Funcionalidades
+
+### ElevenLabsPanel (`components/ElevenLabsPanel.tsx`)
+
+Interface visual clone do ElevenLabs Studio 3.0.
+
+| Feature | Detalhes |
+|---------|----------|
+| Vozes | Listagem dinâmica via API com busca, favoritos e categorias |
+| Modelos | Seletor dinâmico (Turbo v2.5, Multilingual v2, Flash v2.5, etc.) |
+| Settings | Stability, Similarity Boost, Style, Speaker Boost |
+| Player | `<audio>` nativo com `controlsList="nodownload"` |
+| Download | Diálogo nativo "Salvar como" via `tauri-plugin-dialog` → `write_file` |
+| Créditos | Exibição em tempo real de caracteres restantes |
+
+### GoogleTTSPanel (`components/GoogleTTSPanel.tsx`)
+
+Interface dedicada para geração TTS via Google Gemini.
+
+| Feature | Detalhes |
+|---------|----------|
+| Vozes | 30 vozes pré-configuradas com tags (narrative, news, promo, etc.) |
+| Style Instructions | Campo para instruções de estilo/entonação |
+| Pipeline de áudio | PCM raw → WAV header (`createWavFromPcm`) → FFmpeg WAV→MP3 (192kbps, 44100Hz, mono) |
+| Fallback | Se FFmpeg falhar, usa WAV diretamente |
+| Player | `<audio>` nativo com `controlsList="nodownload"` |
+| Download | Diálogo nativo "Salvar como" via `tauri-plugin-dialog` → `write_file` |
+| Favoritos | Persistência local via `localStorage` |
+
+### ImageGeneratorPanel (`components/ImageGeneratorPanel.tsx`)
+
+Interface dedicada para geração de imagens via RunWare (Flux.1 Schnell).
+
+| Feature | Detalhes |
+|---------|----------|
+| Prompt | Campo de texto livre para descrever a imagem desejada |
+| Aspect Ratio | Seletor de proporção (1:1, 16:9, 9:16, 4:3) |
+| Quantidade | Geração de 1 a 4 imagens por vez |
+| Galeria | Grid de resultados com zoom, download e remoção |
+| Download | Diálogo nativo "Salvar como" via `tauri-plugin-dialog` → `write_file` |
+| Preview | Lightbox com imagem em tela cheia ao clicar |
+
+### PromptDebugModal (`components/PromptDebugModal.tsx`)
+
+Modal de debug visual de prompts antes do envio para a IA.
+
+| Feature | Detalhes |
+|---------|----------|
+| Estágios | P1 (Reescrita Magnética) e P2 (Estruturação Viral) |
+| Info exibidas | Modelo, Provider, tipo de prompt (custom/default), input length |
+| Ações | System Prompt, User Prompt, botões Confirmar/Cancelar |
+| Uso | Ativado pelo `PipelineExecutor.setPromptPreview()` |
+
 ---
 
 ## 5. Libs Utilitárias
@@ -223,9 +373,10 @@ Serviço dedicado para interação com a API da Eleven Labs.
 | Arquivo | Responsabilidade |
 |---------|-----------------|
 | `lib/youtubeMock.ts` | `searchChannelVideos()` (YouTube API) + `transcribeVideo()` (APIFY wrapper) |
-| `lib/apifyClient.ts` | `fetchYoutubeTranscriptFromApify()` — chama ator APIFY com **rotação de chaves**, failover automático e retry |
+| `lib/apifyClient.ts` | `fetchYoutubeTranscriptFromApify()` — chama ator APIFY com **rotação de chaves**, failover automático, detecção de `error:true` e normalização snake_case→camelCase |
 | `lib/audioUtils.ts` | `pcmToWav()` — converte PCM base64 → WAV. `getAudioDuration()` |
 | `lib/supabase.ts` | `configureSupabase()`, `getSupabase()`, `isSupabaseConfigured()` |
+| `lib/geminiKeyManager.ts` | **Rotação de chaves Gemini** — `withGeminiKeyRotation()`, `parseGeminiKeys()`, `isGeminiRetryableError()` |
 | `lib/subtitleGenerator.ts` | Geração de legendas SRT |
 | `lib/smartChunker.ts` | Chunking inteligente de texto |
 | `lib/alignmentEngine.ts` | Alinhamento de texto/áudio |
@@ -303,6 +454,8 @@ Serviço dedicado para interação com a API da Eleven Labs.
 }
 ```
 
+> **Nota:** A chave `flux` é usada tanto para o provider Flux legado quanto para a **RunWare API** (campo "Runware/Flux" no Settings).
+
 ---
 
 ## 7. Regras de Negócio
@@ -337,11 +490,11 @@ Serviço dedicado para interação com a API da Eleven Labs.
 |-----|-----|-------------|
 | YouTube Data API v3 | Busca de vídeos por canal | `apiKeys.youtube` |
 | APIFY | Transcrição (`starvibe~youtube-video-transcript`) c/ **Rotação de Chaves + Failover** | `apiKeys.apify` (Multi-line) |
-| Google Gemini | LLM (roteiros), TTS, Geração de imagens | `apiKeys.gemini` |
+| Google Gemini | LLM (roteiros), TTS, Geração de imagens | `apiKeys.gemini` (Multi-line) |
 | OpenAI | LLM alternativo (GPT-4o etc.) | `apiKeys.openai` |
 | OpenRouter | LLM alternativo (Claude, Llama etc.) | `apiKeys.openrouter` |
 | ElevenLabs | TTS alternativo | `apiKeys.elevenLabs` |
-| Flux | Geração de imagens alternativa | `apiKeys.flux` |
+| **RunWare** | Geração de imagens (Flux.1 Schnell) | `apiKeys.flux` |
 | Supabase | Database + Auth (opcional) | `apiKeys.supabaseUrl` + `apiKeys.supabaseKey` |
 
 ---
@@ -379,9 +532,9 @@ Dark Video Factory/
 │   ├── main.tsx                   # Entry point React
 │   ├── index.css                  # Estilos globais
 │   ├── types.ts                   # Todos os tipos e interfaces
-│   ├── components/                # 17 componentes React
-│   ├── services/                  # 9 serviços
-│   ├── lib/                       # 8 libs utilitárias
+│   ├── components/                # 24 componentes React
+│   ├── services/                  # 12 serviços
+│   ├── lib/                       # 9 libs utilitárias
 │   └── hooks/                     # 1 hook (useJobMonitor)
 ├── src-tauri/                     # Backend Rust (Tauri v2)
 ├── GEMINI.md                      # Regras do projeto para IA
@@ -455,3 +608,10 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-02-15 | **Robust Error Handling**: Criado `ErrorDetailModal` com exibição de logs detalhados e função de Reset Stage |
 | 2026-02-15 | **Multi-Key Apify**: Implementado suporte a múltiplas chaves com rotação, failover automático e diagnóstico de quota no Settings |
 | 2026-02-16 | **Eleven Labs Integration**: Interface visual clone do Studio 3.0, geração de áudio, validação de créditos, download robusto e layout em cards independentes |
+| 2026-02-16 | **Google TTS Panel**: Interface dedicada para Gemini TTS (`gemini-2.5-flash-preview-tts`), 30 vozes, style instructions, pipeline PCM→WAV→MP3 via FFmpeg |
+| 2026-02-16 | **Native Save Dialog**: Instalado `tauri-plugin-dialog` para diálogo nativo "Salvar como" no download de áudio (ElevenLabs + Google TTS) |
+| 2026-02-16 | **Tauri Commands**: Adicionados `get_downloads_dir`, registrado `tauri_plugin_dialog`, permissão `dialog:default` nas capabilities |
+| 2026-02-16 | **Image Generator (RunWare)**: Criado `ImageGeneratorPanel` + `runwareService` para geração de imagens via Flux.1 Schnell (modelo `runware:100@1`), galeria com lightbox, download nativo |
+| 2026-02-16 | **Prompt Debug Modal**: Criado `PromptDebugModal` para preview visual dos prompts P1/P2 antes do envio para a IA, integrado ao `PipelineExecutor.setPromptPreview()` |
+| 2026-02-16 | **Gemini Key Rotation**: Criado `geminiKeyManager.ts` para rotação automática de múltiplas chaves Gemini com detecção de erros retryable (429, quota, rate limit) |
+| 2026-02-17 | **APIFY Error Fix**: Corrigida detecção de erro no `apifyClient.ts` — agora verifica `result.error === true` (antes só checava `status === 'error'`). Normalização de metadados snake_case → camelCase (`channel_name` → `channelName`, `view_count` → `viewCount`, etc.) |

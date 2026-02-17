@@ -3,7 +3,7 @@ import {
   Activity, Layers, Settings, Play, StopCircle, Terminal as TerminalIcon,
   CheckCircle, Search, FileText, Loader2, X, MonitorPlay, FolderOpen,
   RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap, AlertTriangle, Info,
-  Plus, LayoutGrid, Mic
+  Plus, LayoutGrid, Mic, Image
 } from 'lucide-react';
 import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob, VideoProject, PipelineStage, PIPELINE_STAGES_ORDER } from './types';
 import ProfileEditor from './components/ProfileEditor';
@@ -22,6 +22,7 @@ import TranscriptApprovalModal from './components/TranscriptApprovalModal';
 import StageDetailsModal from './components/StageDetailsModal';
 import { ElevenLabsPanel } from './components/ElevenLabsPanel';
 import { GoogleTTSPanel } from './components/GoogleTTSPanel';
+import { ImageGeneratorPanel } from './components/ImageGeneratorPanel';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
 import { ProjectService } from './services/ProjectService';
@@ -47,7 +48,7 @@ const INITIAL_CONFIG: EngineConfig = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator'>('pipeline');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
@@ -342,7 +343,7 @@ export default function App() {
 
   const queueJob = async (status: JobStatus = JobStatus.QUEUED) => {
     if (!selectedProfileId) return;
-    if (status === JobStatus.QUEUED && !config.apiKeys.gemini) {
+    if (status === JobStatus.QUEUED && !config.apiKeys.gemini?.trim()) {
       showConfigAlert('A chave da Gemini API não está configurada. Vá em Configurações para adicioná-la.', 'gemini');
       return;
     }
@@ -744,6 +745,7 @@ export default function App() {
               { id: 'pipeline', icon: LayoutGrid, label: 'Pipeline' },
               { id: 'dashboard', icon: Activity, label: 'Dashboard' },
               { id: 'profiles', icon: Layers, label: 'Perfis' },
+              { id: 'image-generator', icon: Image, label: 'Gerador de Imagens' },
               { id: 'settings', icon: Settings, label: 'Configuração' },
               { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
               { id: 'google-tts', icon: Mic, label: 'Google TTS' },
@@ -942,6 +944,8 @@ export default function App() {
               config={config}
               onClose={() => setActiveTab('pipeline')}
             />
+          ) : activeTab === 'image-generator' ? (
+            <ImageGeneratorPanel config={config} />
           ) : (
             <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
               <SettingsPanel config={config} onSave={setConfig} />

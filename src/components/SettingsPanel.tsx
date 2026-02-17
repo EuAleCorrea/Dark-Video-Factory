@@ -298,14 +298,27 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="col-span-2 md:col-span-1">
-                        <label className="block text-sm font-bold text-[#64748B] mb-2">Google Gemini API Key (Essencial)</label>
-                        <input
-                            type="password"
-                            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-primary outline-none tracking-widest"
+                        <label className="block text-sm font-bold text-[#64748B] mb-2 flex items-center gap-2">
+                            Google Gemini API Keys (Essencial)
+                            {(() => {
+                                const count = (localConfig.apiKeys.gemini || '').split(/[,;\n]+/).filter((t: string) => t.trim().length > 0).length;
+                                return count > 0 ? (
+                                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                                        🔑 {count} chave{count > 1 ? 's' : ''}
+                                    </span>
+                                ) : null;
+                            })()}
+                        </label>
+                        <textarea
+                            rows={3}
+                            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-xs focus:border-primary outline-none tracking-widest placeholder:text-[#CBD5E1] resize-none"
                             value={localConfig.apiKeys.gemini}
                             onChange={(e) => handleKeyChange('gemini', e.target.value)}
-                            placeholder="sk-..."
+                            placeholder={"AIzaSy_chave1\nAIzaSy_chave2\nAIzaSy_chave3"}
                         />
+                        <p className="text-xs text-gray-400 mt-1">
+                            Cole múltiplas chaves (uma por linha). O sistema rotaciona automaticamente em caso de erro de quota.
+                        </p>
                     </div>
 
                     <div className="col-span-2 md:col-span-1">
@@ -402,7 +415,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
 
                     <div className="col-span-2 md:col-span-1">
                         <label className="block text-sm font-bold text-purple-500 mb-2 flex items-center gap-2">
-                            Flux API Key (BFL)
+                            Runware API Key
                         </label>
                         <input
                             type="password"
