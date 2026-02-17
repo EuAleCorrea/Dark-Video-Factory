@@ -122,8 +122,12 @@ class NanoBananaProvider implements IImageProvider {
                 console.log(`[NanoBanana] 🎨 Gerando imagem ${i + 1}/${count} — chave ${keyIndex + 1}/${totalKeys} (${aspectRatio})...`);
 
                 try {
+                    const modelName = 'gemini-2.0-flash-exp';
+                    onLog?.(`📡 Modelo: ${modelName}`);
+                    onLog?.(`🔑 Chave: ${singleKey.substring(0, 8)}...${singleKey.substring(singleKey.length - 4)}`);
+
                     const response = await ai.models.generateContent({
-                        model: 'gemini-2.5-flash-image',
+                        model: modelName,
                         contents: prompt,
                         config: {
                             responseModalities: ['TEXT', 'IMAGE'],
@@ -133,35 +137,71 @@ class NanoBananaProvider implements IImageProvider {
                         },
                     });
 
+                    onLog?.(`📥 Resposta recebida — status OK`);
+
                     // Extrai a imagem inline da resposta
                     const parts = response.candidates?.[0]?.content?.parts;
                     if (!parts) {
+                        onLog?.(`⚠️ Resposta sem parts: ${JSON.stringify(response.candidates?.[0]?.content || 'null').substring(0, 300)}`);
                         throw new Error(`Resposta sem parts do Gemini (iteração ${i + 1})`);
                     }
+
+                    onLog?.(`📦 Parts recebidas: ${parts.length} (tipos: ${parts.map((p: any) => p.inlineData ? 'IMAGE' : p.text ? 'TEXT' : 'UNKNOWN').join(', ')})`);
 
                     const imagePart = parts.find((p: any) => p.inlineData);
                     if (!imagePart?.inlineData) {
                         const textPart = parts.find((p: any) => p.text);
                         const reason = textPart?.text || 'Sem imagem na resposta';
+                        onLog?.(`❌ Gemini retornou texto mas sem imagem: ${reason.substring(0, 200)}`);
                         throw new Error(`Gemini não retornou imagem: ${reason}`);
                     }
 
                     const dataUri = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
-                    onLog?.(`✅ Imagem ${i + 1}/${count} gerada com sucesso`);
+                    onLog?.(`✅ Imagem ${i + 1}/${count} gerada com sucesso (${imagePart.inlineData.mimeType})`);
                     console.log(`[NanoBanana] ✅ Imagem ${i + 1}/${count} gerada com sucesso`);
                     return dataUri;
                 } catch (err: any) {
-                    // Normaliza erros de API para mensagens legíveis
+                    // ===== DIAGNÓSTICO DETALHADO =====
                     const raw = err?.message || String(err);
+                    const statusCode = err?.status || err?.statusCode || err?.code || 'N/A';
+                    const errorType = err?.constructor?.name || typeof err;
+
+                    console.error(`[NanoBanana] ❌ ERRO COMPLETO:`, err);
+                    console.error(`[NanoBanana] ❌ Tipo: ${errorType}, Status: ${statusCode}`);
+                    console.error(`[NanoBanana] ❌ Message: ${raw}`);
+
+                    onLog?.(`❌ ─── ERRO DETALHADO ───`);
+                    onLog?.(`   Tipo: ${errorType}`);
+                    onLog?.(`   Status/Code: ${statusCode}`);
+                    onLog?.(`   Mensagem: ${raw.substring(0, 300)}`);
+
+                    // Detecta erros específicos
+                    if (raw.includes('Failed to fetch') || raw.includes('NetworkError') || raw.includes('ERR_NETWORK')) {
+                        onLog?.(`🌐 DIAGNÓSTICO: Erro de REDE — a requisição NÃO saiu do app. Possível bloqueio de CORS/CSP ou sem internet.`);
+                        throw new Error(`Erro de rede: a requisição não chegou ao Gemini. Verifique sua conexão.`);
+                    }
                     if (raw.includes('429') || raw.includes('RESOURCE_EXHAUSTED') || raw.includes('quota')) {
                         onLog?.(`⚠️ Chave ${keyIndex + 1}/${totalKeys}: quota esgotada, tentando próxima...`);
                         throw new Error(`Quota Gemini esgotada (429). Tentando próxima chave...`);
+                    }
+                    if (raw.includes('401') || raw.includes('UNAUTHENTICATED')) {
+                        onLog?.(`🔒 DIAGNÓSTICO: Chave INVÁLIDA ou expirada!`);
+                        throw new Error(`Chave Gemini inválida (401). Verifique nas Configurações.`);
+                    }
+                    if (raw.includes('403') || raw.includes('PERMISSION_DENIED')) {
+                        onLog?.(`🔒 DIAGNÓSTICO: Chave sem PERMISSÃO para este modelo. Verifique se a API está habilitada no Console.`);
+                        throw new Error(`Sem permissão (403). Habilite a Generative Language API no Google Cloud Console.`);
+                    }
+                    if (raw.includes('404') || raw.includes('NOT_FOUND')) {
+                        onLog?.(`🔍 DIAGNÓSTICO: Modelo NÃO ENCONTRADO. O nome do modelo pode estar incorreto.`);
+                        throw new Error(`Modelo não encontrado (404). Verifique o nome do modelo.`);
                     }
                     if (raw.includes('400') || raw.includes('INVALID_ARGUMENT')) {
                         onLog?.(`❌ Prompt inválido ou bloqueado pelo Gemini`);
                         throw new Error(`Prompt inválido ou bloqueado pelo Gemini: ${raw.substring(0, 200)}`);
                     }
-                    onLog?.(`❌ Erro: ${raw.substring(0, 150)}`);
+
+                    onLog?.(`❓ Erro não categorizado: ${raw.substring(0, 200)}`);
                     throw err;
                 }
             });
