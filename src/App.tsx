@@ -32,6 +32,7 @@ import { PipelineExecutor, PromptPreviewRequest } from './services/PipelineExecu
 import { configureSupabase } from './lib/supabase';
 import PromptDebugModal, { PromptPreviewData } from './components/PromptDebugModal';
 import ErrorDetailModal from './components/ErrorDetailModal';
+import { StatusModalProvider } from './contexts/StatusModalContext';
 
 const STORAGE_KEY_CONFIG = 'DARK_FACTORY_CONFIG_V1';
 
@@ -643,456 +644,458 @@ export default function App() {
   const getSelectedProfile = () => profiles.find(p => p.id === selectedJob?.channelId);
 
   return (
-    <>
-      <VideoSelectorModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        isLoading={isSearchingChannel}
-        channelName={modelChannelInput}
-        videos={foundVideos}
-        onSelect={handleSelectVideo}
-        onMultiSelect={activeTab === 'pipeline' ? handleMultiSelectVideos : undefined}
-        error={searchError}
-        onSearch={handleSearchChannel}
-      />
-
-
-      {showPreview && selectedJob?.result && (
-        <PreviewPlayer
-          storyboard={selectedJob.result.storyboard}
-          audioUrl={selectedJob.result.masterAudioUrl || ''}
-          subtitleConfig={getSelectedProfile()?.subtitleStyle}
-          format={getSelectedProfile()?.format || VideoFormat.SHORTS}
-          onClose={() => setShowPreview(false)}
+    <StatusModalProvider>
+      <>
+        <VideoSelectorModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          isLoading={isSearchingChannel}
+          channelName={modelChannelInput}
+          videos={foundVideos}
+          onSelect={handleSelectVideo}
+          onMultiSelect={activeTab === 'pipeline' ? handleMultiSelectVideos : undefined}
+          error={searchError}
+          onSearch={handleSearchChannel}
         />
-      )}
 
-      {/* ========== HEADER ========== */}
-      <header className="h-14 border-b border-[#E2E8F0] flex items-center justify-between px-5 bg-white/80 backdrop-blur-xl z-50 shrink-0">
-        <div className="flex items-center gap-5">
-          {/* LOGO */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
-              <Activity className="text-white w-5 h-5" strokeWidth={2.5} />
+
+        {showPreview && selectedJob?.result && (
+          <PreviewPlayer
+            storyboard={selectedJob.result.storyboard}
+            audioUrl={selectedJob.result.masterAudioUrl || ''}
+            subtitleConfig={getSelectedProfile()?.subtitleStyle}
+            format={getSelectedProfile()?.format || VideoFormat.SHORTS}
+            onClose={() => setShowPreview(false)}
+          />
+        )}
+
+        {/* ========== HEADER ========== */}
+        <header className="h-14 border-b border-[#E2E8F0] flex items-center justify-between px-5 bg-white/80 backdrop-blur-xl z-50 shrink-0">
+          <div className="flex items-center gap-5">
+            {/* LOGO */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+                <Activity className="text-white w-5 h-5" strokeWidth={2.5} />
+              </div>
+              <span className="font-semibold text-[#0F172A] tracking-tight text-lg">
+                Dark Factory <span className="text-sm text-primary/70 ml-1">v2.1</span>
+              </span>
             </div>
-            <span className="font-semibold text-[#0F172A] tracking-tight text-lg">
-              Dark Factory <span className="text-sm text-primary/70 ml-1">v2.1</span>
-            </span>
-          </div>
 
-          <div className="h-6 w-px bg-[#E2E8F0]" />
+            <div className="h-6 w-px bg-[#E2E8F0]" />
 
-          {/* SYSTEM STATUS */}
-          <div className="flex items-center gap-3 text-base">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-primary status-pulse" />
-              <span className="text-primary font-medium">Online</span>
+            {/* SYSTEM STATUS */}
+            <div className="flex items-center gap-3 text-base">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-primary status-pulse" />
+                <span className="text-primary font-medium">Online</span>
+              </div>
+              <span className="text-[#94A3B8] text-sm">{uptime}</span>
             </div>
-            <span className="text-[#94A3B8] text-sm">{uptime}</span>
-          </div>
 
-          <div className="h-6 w-px bg-[#E2E8F0]" />
+            <div className="h-6 w-px bg-[#E2E8F0]" />
 
-          {/* METRICS */}
-          <div className="hidden lg:flex items-center gap-5 text-sm text-[#64748B]">
-            <div className="flex items-center gap-2">
-              <span className="text-[#3B82F6] text-sm font-medium">CPU</span>
-              <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
-                <div className="h-full bg-[#3B82F6] rounded-full transition-all" style={{ width: `${metrics.cpuUsage}%` }} />
+            {/* METRICS */}
+            <div className="hidden lg:flex items-center gap-5 text-sm text-[#64748B]">
+              <div className="flex items-center gap-2">
+                <span className="text-[#3B82F6] text-sm font-medium">CPU</span>
+                <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                  <div className="h-full bg-[#3B82F6] rounded-full transition-all" style={{ width: `${metrics.cpuUsage}%` }} />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[#8B5CF6] text-sm font-medium">GPU</span>
+                <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                  <div className="h-full bg-[#8B5CF6] rounded-full transition-all" style={{ width: `${metrics.gpuUsage}%` }} />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[#F59E0B] text-sm font-medium">RAM</span>
+                <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                  <div className="h-full bg-[#F59E0B] rounded-full transition-all" style={{ width: `${metrics.ramUsage}%` }} />
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[#8B5CF6] text-sm font-medium">GPU</span>
-              <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
-                <div className="h-full bg-[#8B5CF6] rounded-full transition-all" style={{ width: `${metrics.gpuUsage}%` }} />
-              </div>
+          </div>
+
+          {/* RIGHT SIDE */}
+          <div className="flex items-center gap-4 text-base text-[#64748B]">
+            <div className="hidden md:flex items-center gap-2">
+              <HardDrive size={16} />
+              <span>Nós: {metrics.activeContainers}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[#F59E0B] text-sm font-medium">RAM</span>
-              <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
-                <div className="h-full bg-[#F59E0B] rounded-full transition-all" style={{ width: `${metrics.ramUsage}%` }} />
-              </div>
+            <div className="hidden md:flex items-center gap-2">
+              <Thermometer size={16} />
+              <span>{metrics.temperature}°C</span>
             </div>
-          </div>
-        </div>
-
-        {/* RIGHT SIDE */}
-        <div className="flex items-center gap-4 text-base text-[#64748B]">
-          <div className="hidden md:flex items-center gap-2">
-            <HardDrive size={16} />
-            <span>Nós: {metrics.activeContainers}</span>
-          </div>
-          <div className="hidden md:flex items-center gap-2">
-            <Thermometer size={16} />
-            <span>{metrics.temperature}°C</span>
-          </div>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className="p-2.5 hover:bg-[#F1F5F9] rounded-xl transition-colors text-[#64748B] hover:text-[#0F172A]"
-          >
-            <Settings size={20} />
-          </button>
-        </div>
-      </header>
-
-      {/* ========== MAIN CONTAINER ========== */}
-      <div className="flex flex-1 overflow-hidden">
-
-        {/* ========== SIDEBAR (FIXED) ========== */}
-        <aside className="w-64 border-r border-[#E2E8F0] bg-white flex flex-col shrink-0 z-50">
-          <nav className="flex-1 py-5 flex flex-col gap-1.5 px-4">
-            {[
-              { id: 'pipeline', icon: LayoutGrid, label: 'Pipeline' },
-              { id: 'dashboard', icon: Activity, label: 'Dashboard' },
-              { id: 'profiles', icon: Layers, label: 'Perfis' },
-              { id: 'image-generator', icon: Image, label: 'Gerador de Imagens' },
-              { id: 'settings', icon: Settings, label: 'Configuração' },
-              { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
-              { id: 'google-tts', icon: Mic, label: 'Google TTS' },
-            ].map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id as typeof activeTab)}
-                className={`w-full h-12 flex items-center gap-3 px-4 rounded-xl transition-all duration-200 ${activeTab === item.id
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
-                  }`}
-              >
-                <item.icon size={20} className="shrink-0" />
-                <span className="text-base font-medium">
-                  {item.label}
-                </span>
-              </button>
-            ))}
-          </nav>
-
-          {/* BOTTOM ACTIONS */}
-          <div className="pb-5 flex flex-col gap-1.5 px-4">
             <button
-              onClick={handleCreateProject}
-              className="w-full h-12 flex items-center gap-3 px-4 rounded-xl text-primary bg-primary/5 hover:bg-primary/10 transition-all font-medium text-base"
+              onClick={() => setActiveTab('settings')}
+              className="p-2.5 hover:bg-[#F1F5F9] rounded-xl transition-colors text-[#64748B] hover:text-[#0F172A]"
             >
-              <Plus size={20} className="shrink-0" />
-              Novo Projeto
+              <Settings size={20} />
             </button>
           </div>
-        </aside>
+        </header>
 
-        {/* ========== WORKSPACE ========== */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-[#F8FAFC]">
-          {activeTab === 'pipeline' ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Pipeline Header */}
-              <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] shrink-0">
-                <div className="flex items-center gap-3">
-                  <LayoutGrid size={20} className="text-primary" />
-                  <h2 className="text-base font-semibold text-[#0F172A]">Pipeline de Produção</h2>
-                  <span className="text-sm text-[#94A3B8] bg-[#F1F5F9] px-3 py-1 rounded-lg">
-                    {projects.length} projetos
+        {/* ========== MAIN CONTAINER ========== */}
+        <div className="flex flex-1 overflow-hidden">
+
+          {/* ========== SIDEBAR (FIXED) ========== */}
+          <aside className="w-64 border-r border-[#E2E8F0] bg-white flex flex-col shrink-0 z-50">
+            <nav className="flex-1 py-5 flex flex-col gap-1.5 px-4">
+              {[
+                { id: 'pipeline', icon: LayoutGrid, label: 'Pipeline' },
+                { id: 'dashboard', icon: Activity, label: 'Dashboard' },
+                { id: 'profiles', icon: Layers, label: 'Perfis' },
+                { id: 'image-generator', icon: Image, label: 'Gerador de Imagens' },
+                { id: 'settings', icon: Settings, label: 'Configuração' },
+                { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
+                { id: 'google-tts', icon: Mic, label: 'Google TTS' },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id as typeof activeTab)}
+                  className={`w-full h-12 flex items-center gap-3 px-4 rounded-xl transition-all duration-200 ${activeTab === item.id
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
+                    }`}
+                >
+                  <item.icon size={20} className="shrink-0" />
+                  <span className="text-base font-medium">
+                    {item.label}
                   </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  {/* Profile Selector */}
-                  <div className="relative">
-                    <select
-                      className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-2.5 text-sm text-[#0F172A] appearance-none cursor-pointer hover:border-[#CBD5E1] pr-8 transition-colors"
-                      value={selectedProfileId}
-                      onChange={(e) => setSelectedProfileId(e.target.value)}
-                    >
-                      <option value="">Todos os Canais</option>
-                      {profiles.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+                </button>
+              ))}
+            </nav>
+
+            {/* BOTTOM ACTIONS */}
+            <div className="pb-5 flex flex-col gap-1.5 px-4">
+              <button
+                onClick={handleCreateProject}
+                className="w-full h-12 flex items-center gap-3 px-4 rounded-xl text-primary bg-primary/5 hover:bg-primary/10 transition-all font-medium text-base"
+              >
+                <Plus size={20} className="shrink-0" />
+                Novo Projeto
+              </button>
+            </div>
+          </aside>
+
+          {/* ========== WORKSPACE ========== */}
+          <main className="flex-1 flex flex-col overflow-hidden bg-[#F8FAFC]">
+            {activeTab === 'pipeline' ? (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Pipeline Header */}
+                <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] shrink-0">
+                  <div className="flex items-center gap-3">
+                    <LayoutGrid size={20} className="text-primary" />
+                    <h2 className="text-base font-semibold text-[#0F172A]">Pipeline de Produção</h2>
+                    <span className="text-sm text-[#94A3B8] bg-[#F1F5F9] px-3 py-1 rounded-lg">
+                      {projects.length} projetos
+                    </span>
                   </div>
+                  <div className="flex items-center gap-3">
+                    {/* Profile Selector */}
+                    <div className="relative">
+                      <select
+                        className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-2.5 text-sm text-[#0F172A] appearance-none cursor-pointer hover:border-[#CBD5E1] pr-8 transition-colors"
+                        value={selectedProfileId}
+                        onChange={(e) => setSelectedProfileId(e.target.value)}
+                      >
+                        <option value="">Todos os Canais</option>
+                        {profiles.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+                    </div>
+                    <button
+                      onClick={handleCreateProject}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:opacity-90 transition-all"
+                    >
+                      <Plus size={16} />
+                      Novo Projeto
+                    </button>
+                  </div>
+                </div>
+
+                {/* Kanban Board */}
+                {/* Kanban Board */}
+                <KanbanBoard
+                  projects={filteredProjects}
+                  selectedIds={selectedProjectIds}
+                  onToggleSelect={handleToggleProjectSelect}
+                  onProjectClick={handleProjectClick}
+                  onDeleteProject={handleDeleteProject}
+                  onStageClick={handleStageClick}
+                  onViewError={handleViewError}
+                  onDragEnd={async (result) => {
+                    const { destination, source, draggableId } = result;
+
+                    if (!destination) return;
+
+                    if (
+                      destination.droppableId === source.droppableId &&
+                      destination.index === source.index
+                    ) {
+                      return;
+                    }
+
+                    const project = projects.find(p => p.id === draggableId);
+                    if (!project) return;
+
+                    const newStage = destination.droppableId as PipelineStage;
+
+                    // Optimistic update
+                    setProjects(prev => prev.map(p =>
+                      p.id === draggableId
+                        ? { ...p, currentStage: newStage }
+                        : p
+                    ));
+
+                    try {
+                      await projectServiceRef.current.updateProject(project.id, { currentStage: newStage });
+                    } catch (e) {
+                      console.error('Failed to move project:', e);
+                      // Revert on error
+                      setProjects(prev => prev.map(p =>
+                        p.id === draggableId
+                          ? { ...p, currentStage: project.currentStage }
+                          : p
+                      ));
+                      alert("Erro ao mover projeto. Tente novamente.");
+                    }
+                  }}
+                />
+
+                {/* Batch Action Bar */}
+                <BatchActionBar
+                  selectedCount={selectedProjectIds.size}
+                  selectedStage={getSelectedProjectsStage()}
+                  onAdvanceAuto={() => { setStageModalMode('auto'); setIsStageModalOpen(true); }}
+                  onAdvanceManual={() => { setStageModalMode('manual'); setIsStageModalOpen(true); }}
+                  onDelete={handleDeleteSelectedProjects}
+                  onClearSelection={() => setSelectedProjectIds(new Set())}
+                />
+
+                {/* Stage Action Modal */}
+                <StageActionModal
+                  isOpen={isStageModalOpen}
+                  onClose={() => setIsStageModalOpen(false)}
+                  currentStage={getSelectedProjectsStage() || PipelineStage.REFERENCE}
+                  projectCount={selectedProjectIds.size}
+                  onSubmitAuto={handleBatchAutoAdvance}
+                  onSubmitManual={handleBatchManualAdvance}
+                />
+
+                {/* Transcript Approval Modal (Batch) */}
+                {reviewProjects.length > 0 && (
+                  <TranscriptApprovalModal
+                    projects={reviewProjects}
+                    config={config}
+                    onApproveAll={async (results) => {
+                      for (const { project: p, transcript, metadata } of results) {
+                        // Monta o reference com TODOS os dados da APIFY
+                        const enrichedReference = {
+                          ...p.stageData.reference!,
+                          transcript,
+                          // Metadados extras da APIFY
+                          description: metadata?.description,
+                          viewCount: metadata?.viewCount,
+                          publishedAt: metadata?.date,
+                          duration: metadata?.duration,
+                          // Atualiza título/canal se a APIFY trouxer dados mais precisos
+                          ...(metadata?.channelName && { channelName: metadata.channelName }),
+                          ...(metadata?.title && { videoTitle: metadata.title }),
+                        };
+
+                        await projectServiceRef.current.updateProject(p.id, {
+                          stageData: { ...p.stageData, reference: enrichedReference }
+                        });
+                        const updatedProject = { ...p, stageData: { ...p.stageData, reference: enrichedReference } };
+                        const advanced = await projectServiceRef.current.advanceStage(updatedProject, {});
+                        setProjects(prev => prev.map(pr => pr.id === p.id ? advanced : pr));
+                      }
+                      setReviewProjects([]);
+                    }}
+                    onReject={() => setReviewProjects([])}
+                    onClose={() => setReviewProjects([])}
+                  />
+                )}
+              </div>
+            ) : activeTab === 'dashboard' ? (
+              <Dashboard projects={projects} profiles={profiles} />
+            ) : activeTab === 'profiles' ? (
+              <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
+                <div className="max-w-6xl mx-auto">
+                  <ProfileEditor
+                    persistence={persistenceRef.current}
+                    profiles={profiles}
+                    config={config}
+                    onSave={handleSaveProfile}
+                    onDelete={handleDeleteProfile}
+                  />
+                </div>
+              </div>
+            ) : activeTab === 'test-11labs' ? (
+              <ElevenLabsPanel
+                apiKey={config.apiKeys.elevenLabs}
+                onClose={() => setActiveTab('pipeline')}
+              />
+            ) : activeTab === 'google-tts' ? (
+              <GoogleTTSPanel
+                config={config}
+                onClose={() => setActiveTab('pipeline')}
+              />
+            ) : activeTab === 'image-generator' ? (
+              <ImageGeneratorPanel config={config} />
+            ) : (
+              <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
+                <SettingsPanel config={config} onSave={setConfig} />
+              </div>
+            )}
+          </main>
+        </div>
+
+        {/* ========== FOOTER ========== */}
+        <footer className="h-10 border-t border-[#E2E8F0] bg-white px-6 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-4 text-sm text-[#94A3B8]">
+            {/* Breadcrumbs */}
+          </div>
+          <div className="flex items-center gap-4 text-sm text-[#94A3B8]">
+            <button className="hover:text-[#64748B] transition-colors">
+              <RefreshCw size={14} />
+            </button>
+            <button className="hover:text-[#64748B] transition-colors">
+              <Wifi size={14} />
+            </button>
+            <div className="flex items-center gap-2">
+              <Cloud size={14} className="text-primary/70" />
+              <span className="text-[#64748B]">Local</span>
+            </div>
+          </div>
+        </footer>
+
+        {/* MODAL DE TRANSCRIÇÃO E REESCRITA */}
+        {isTranscriptModalOpen && transcribedText && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white border border-[#E2E8F0] w-full max-w-4xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col scale-in-center">
+              {/* Header */}
+              <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-white">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-primary/10 rounded-xl text-primary">
+                    <FileText size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-[#0F172A]">Revisão e Configuração de Job</h3>
+                    <p className="text-sm text-[#94A3B8]">
+                      {transcribedText.length} caracteres • {selectedRefVideo?.title.substring(0, 50)}...
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsTranscriptModalOpen(false)}
+                  className="p-2 hover:bg-[#F1F5F9] rounded-xl text-[#64748B] hover:text-[#0F172A] transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Content Area - Full Width View */}
+              <div className="flex-1 overflow-hidden flex flex-col">
+                <div className="p-3 bg-[#F8FAFC] border-b border-[#E2E8F0] text-sm text-[#64748B] flex justify-between items-center">
+                  <span>Script Original (Edite se necessário)</span>
+                  <div className="flex items-center gap-2 text-primary/60">
+                    <Zap size={12} />
+                    <span className="text-sm">Prompt aplicado com perfil ativo</span>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                  <textarea
+                    className="w-full h-full min-h-[50vh] bg-transparent text-[#0F172A] text-sm leading-relaxed font-mono resize-none outline-none focus:ring-0"
+                    value={transcribedText}
+                    onChange={(e) => setTranscribedText(e.target.value)}
+                    placeholder="Transcrição original..."
+                  />
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-white border-t border-[#E2E8F0] flex justify-between items-center">
+                <span className="text-sm text-[#94A3B8]">
+                  Perfil ativo: {profiles.find(p => p.id === selectedProfileId)?.name}
+                </span>
+                <div className="flex gap-3">
                   <button
-                    onClick={handleCreateProject}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:opacity-90 transition-all"
+                    onClick={() => setIsTranscriptModalOpen(false)}
+                    className="px-5 py-2.5 text-[#64748B] hover:text-[#0F172A] text-sm transition-colors"
                   >
-                    <Plus size={16} />
-                    Novo Projeto
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => queueJob(JobStatus.PENDING)}
+                    disabled={!selectedProfileId}
+                    className="px-7 py-3 bg-primary hover:opacity-90 text-white font-semibold rounded-xl text-sm transition-all disabled:opacity-40"
+                  >
+                    Confirmar e Salvar como Pendente
                   </button>
                 </div>
               </div>
-
-              {/* Kanban Board */}
-              {/* Kanban Board */}
-              <KanbanBoard
-                projects={filteredProjects}
-                selectedIds={selectedProjectIds}
-                onToggleSelect={handleToggleProjectSelect}
-                onProjectClick={handleProjectClick}
-                onDeleteProject={handleDeleteProject}
-                onStageClick={handleStageClick}
-                onViewError={handleViewError}
-                onDragEnd={async (result) => {
-                  const { destination, source, draggableId } = result;
-
-                  if (!destination) return;
-
-                  if (
-                    destination.droppableId === source.droppableId &&
-                    destination.index === source.index
-                  ) {
-                    return;
-                  }
-
-                  const project = projects.find(p => p.id === draggableId);
-                  if (!project) return;
-
-                  const newStage = destination.droppableId as PipelineStage;
-
-                  // Optimistic update
-                  setProjects(prev => prev.map(p =>
-                    p.id === draggableId
-                      ? { ...p, currentStage: newStage }
-                      : p
-                  ));
-
-                  try {
-                    await projectServiceRef.current.updateProject(project.id, { currentStage: newStage });
-                  } catch (e) {
-                    console.error('Failed to move project:', e);
-                    // Revert on error
-                    setProjects(prev => prev.map(p =>
-                      p.id === draggableId
-                        ? { ...p, currentStage: project.currentStage }
-                        : p
-                    ));
-                    alert("Erro ao mover projeto. Tente novamente.");
-                  }
-                }}
-              />
-
-              {/* Batch Action Bar */}
-              <BatchActionBar
-                selectedCount={selectedProjectIds.size}
-                selectedStage={getSelectedProjectsStage()}
-                onAdvanceAuto={() => { setStageModalMode('auto'); setIsStageModalOpen(true); }}
-                onAdvanceManual={() => { setStageModalMode('manual'); setIsStageModalOpen(true); }}
-                onDelete={handleDeleteSelectedProjects}
-                onClearSelection={() => setSelectedProjectIds(new Set())}
-              />
-
-              {/* Stage Action Modal */}
-              <StageActionModal
-                isOpen={isStageModalOpen}
-                onClose={() => setIsStageModalOpen(false)}
-                currentStage={getSelectedProjectsStage() || PipelineStage.REFERENCE}
-                projectCount={selectedProjectIds.size}
-                onSubmitAuto={handleBatchAutoAdvance}
-                onSubmitManual={handleBatchManualAdvance}
-              />
-
-              {/* Transcript Approval Modal (Batch) */}
-              {reviewProjects.length > 0 && (
-                <TranscriptApprovalModal
-                  projects={reviewProjects}
-                  config={config}
-                  onApproveAll={async (results) => {
-                    for (const { project: p, transcript, metadata } of results) {
-                      // Monta o reference com TODOS os dados da APIFY
-                      const enrichedReference = {
-                        ...p.stageData.reference!,
-                        transcript,
-                        // Metadados extras da APIFY
-                        description: metadata?.description,
-                        viewCount: metadata?.viewCount,
-                        publishedAt: metadata?.date,
-                        duration: metadata?.duration,
-                        // Atualiza título/canal se a APIFY trouxer dados mais precisos
-                        ...(metadata?.channelName && { channelName: metadata.channelName }),
-                        ...(metadata?.title && { videoTitle: metadata.title }),
-                      };
-
-                      await projectServiceRef.current.updateProject(p.id, {
-                        stageData: { ...p.stageData, reference: enrichedReference }
-                      });
-                      const updatedProject = { ...p, stageData: { ...p.stageData, reference: enrichedReference } };
-                      const advanced = await projectServiceRef.current.advanceStage(updatedProject, {});
-                      setProjects(prev => prev.map(pr => pr.id === p.id ? advanced : pr));
-                    }
-                    setReviewProjects([]);
-                  }}
-                  onReject={() => setReviewProjects([])}
-                  onClose={() => setReviewProjects([])}
-                />
-              )}
             </div>
-          ) : activeTab === 'dashboard' ? (
-            <Dashboard projects={projects} profiles={profiles} />
-          ) : activeTab === 'profiles' ? (
-            <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-              <div className="max-w-6xl mx-auto">
-                <ProfileEditor
-                  persistence={persistenceRef.current}
-                  profiles={profiles}
-                  config={config}
-                  onSave={handleSaveProfile}
-                  onDelete={handleDeleteProfile}
-                />
-              </div>
-            </div>
-          ) : activeTab === 'test-11labs' ? (
-            <ElevenLabsPanel
-              apiKey={config.apiKeys.elevenLabs}
-              onClose={() => setActiveTab('pipeline')}
-            />
-          ) : activeTab === 'google-tts' ? (
-            <GoogleTTSPanel
-              config={config}
-              onClose={() => setActiveTab('pipeline')}
-            />
-          ) : activeTab === 'image-generator' ? (
-            <ImageGeneratorPanel config={config} />
-          ) : (
-            <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-              <SettingsPanel config={config} onSave={setConfig} />
-            </div>
-          )}
-        </main>
-      </div>
-
-      {/* ========== FOOTER ========== */}
-      <footer className="h-10 border-t border-[#E2E8F0] bg-white px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4 text-sm text-[#94A3B8]">
-          {/* Breadcrumbs */}
-        </div>
-        <div className="flex items-center gap-4 text-sm text-[#94A3B8]">
-          <button className="hover:text-[#64748B] transition-colors">
-            <RefreshCw size={14} />
-          </button>
-          <button className="hover:text-[#64748B] transition-colors">
-            <Wifi size={14} />
-          </button>
-          <div className="flex items-center gap-2">
-            <Cloud size={14} className="text-primary/70" />
-            <span className="text-[#64748B]">Local</span>
           </div>
-        </div>
-      </footer>
+        )}
 
-      {/* MODAL DE TRANSCRIÇÃO E REESCRITA */}
-      {isTranscriptModalOpen && transcribedText && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white border border-[#E2E8F0] w-full max-w-4xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col scale-in-center">
-            {/* Header */}
-            <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-white">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-primary/10 rounded-xl text-primary">
-                  <FileText size={18} />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-[#0F172A]">Revisão e Configuração de Job</h3>
-                  <p className="text-sm text-[#94A3B8]">
-                    {transcribedText.length} caracteres • {selectedRefVideo?.title.substring(0, 50)}...
-                  </p>
-                </div>
+        {/* CONFIG ALERT TOAST */}
+        {configAlert && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999]" style={{ animation: 'fade-in 0.3s ease-out' }}>
+            <div className="bg-white border border-amber-200 shadow-xl rounded-2xl px-5 py-4 flex items-start gap-3 max-w-lg">
+              <div className="w-9 h-9 shrink-0 rounded-xl bg-amber-50 flex items-center justify-center mt-0.5">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
               </div>
-              <button
-                onClick={() => setIsTranscriptModalOpen(false)}
-                className="p-2 hover:bg-[#F1F5F9] rounded-xl text-[#64748B] hover:text-[#0F172A] transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Content Area - Full Width View */}
-            <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="p-3 bg-[#F8FAFC] border-b border-[#E2E8F0] text-sm text-[#64748B] flex justify-between items-center">
-                <span>Script Original (Edite se necessário)</span>
-                <div className="flex items-center gap-2 text-primary/60">
-                  <Zap size={12} />
-                  <span className="text-sm">Prompt aplicado com perfil ativo</span>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                <textarea
-                  className="w-full h-full min-h-[50vh] bg-transparent text-[#0F172A] text-sm leading-relaxed font-mono resize-none outline-none focus:ring-0"
-                  value={transcribedText}
-                  onChange={(e) => setTranscribedText(e.target.value)}
-                  placeholder="Transcrição original..."
-                />
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="p-4 bg-white border-t border-[#E2E8F0] flex justify-between items-center">
-              <span className="text-sm text-[#94A3B8]">
-                Perfil ativo: {profiles.find(p => p.id === selectedProfileId)?.name}
-              </span>
-              <div className="flex gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-base font-semibold text-[#0F172A] mb-0.5">Configuração Necessária</p>
+                <p className="text-sm text-[#64748B] leading-relaxed">{configAlert.message}</p>
                 <button
-                  onClick={() => setIsTranscriptModalOpen(false)}
-                  className="px-5 py-2.5 text-[#64748B] hover:text-[#0F172A] text-sm transition-colors"
+                  onClick={() => { setConfigAlert(null); setActiveTab('settings'); }}
+                  className="mt-2.5 text-sm font-semibold text-primary hover:underline flex items-center gap-1.5"
                 >
-                  Cancelar
-                </button>
-                <button
-                  onClick={() => queueJob(JobStatus.PENDING)}
-                  disabled={!selectedProfileId}
-                  className="px-7 py-3 bg-primary hover:opacity-90 text-white font-semibold rounded-xl text-sm transition-all disabled:opacity-40"
-                >
-                  Confirmar e Salvar como Pendente
+                  <Settings className="w-3.5 h-3.5" /> Ir para Configurações
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CONFIG ALERT TOAST */}
-      {configAlert && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999]" style={{ animation: 'fade-in 0.3s ease-out' }}>
-          <div className="bg-white border border-amber-200 shadow-xl rounded-2xl px-5 py-4 flex items-start gap-3 max-w-lg">
-            <div className="w-9 h-9 shrink-0 rounded-xl bg-amber-50 flex items-center justify-center mt-0.5">
-              <AlertTriangle className="w-5 h-5 text-amber-500" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-base font-semibold text-[#0F172A] mb-0.5">Configuração Necessária</p>
-              <p className="text-sm text-[#64748B] leading-relaxed">{configAlert.message}</p>
-              <button
-                onClick={() => { setConfigAlert(null); setActiveTab('settings'); }}
-                className="mt-2.5 text-sm font-semibold text-primary hover:underline flex items-center gap-1.5"
-              >
-                <Settings className="w-3.5 h-3.5" /> Ir para Configurações
+              <button onClick={() => setConfigAlert(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors shrink-0">
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <button onClick={() => setConfigAlert(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors shrink-0">
-              <X className="w-4 h-4" />
-            </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* MODAL DE DETALHES DO ESTÁGIO */}
-      <StageDetailsModal
-        isOpen={isDetailsModalOpen}
-        onClose={() => setIsDetailsModalOpen(false)}
-        project={detailsProject}
-        stage={detailsStage}
-      />
+        {/* MODAL DE DETALHES DO ESTÁGIO */}
+        <StageDetailsModal
+          isOpen={isDetailsModalOpen}
+          onClose={() => setIsDetailsModalOpen(false)}
+          project={detailsProject}
+          stage={detailsStage}
+        />
 
-      {/* PROMPT DEBUG MODAL */}
-      <PromptDebugModal
-        isOpen={isDebugModalOpen}
-        data={debugData}
-        onConfirm={() => {
-          setIsDebugModalOpen(false);
-          debugResolveRef.current?.(true);
-        }}
-        onCancel={() => {
-          setIsDebugModalOpen(false);
-          debugResolveRef.current?.(false);
-        }}
-      />
-      <ErrorDetailModal
-        isOpen={isErrorModalOpen}
-        onClose={() => setIsErrorModalOpen(false)}
-        project={errorProject}
-        onResetStage={handleResetStage}
-      />
-    </>
+        {/* PROMPT DEBUG MODAL */}
+        <PromptDebugModal
+          isOpen={isDebugModalOpen}
+          data={debugData}
+          onConfirm={() => {
+            setIsDebugModalOpen(false);
+            debugResolveRef.current?.(true);
+          }}
+          onCancel={() => {
+            setIsDebugModalOpen(false);
+            debugResolveRef.current?.(false);
+          }}
+        />
+        <ErrorDetailModal
+          isOpen={isErrorModalOpen}
+          onClose={() => setIsErrorModalOpen(false)}
+          project={errorProject}
+          onResetStage={handleResetStage}
+        />
+      </>
+    </StatusModalProvider>
   );
 }

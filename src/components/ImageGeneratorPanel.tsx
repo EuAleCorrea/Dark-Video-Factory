@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
     Image as ImageIcon,
     Sparkles,
@@ -15,12 +15,11 @@ import {
     RefreshCw,
     X,
     ZoomIn,
-    AlertTriangle,
-    CheckCircle2,
     Info
 } from 'lucide-react';
 import { IMAGE_MODELS, getImageProvider, getImageModel } from '../services/imageProviders';
 import { EngineConfig } from '../types';
+import { useStatusModal } from '../contexts/StatusModalContext';
 import { save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -45,34 +44,15 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
     const [error, setError] = useState<string | null>(null);
     const [lightboxImage, setLightboxImage] = useState<GeneratedImage | null>(null);
     const [selectedModel, setSelectedModel] = useState(IMAGE_MODELS[0].id);
-
-    // Status Modal
-    const [statusModal, setStatusModal] = useState<{
-        open: boolean;
-        type: 'progress' | 'success' | 'error';
-        title: string;
-        logs: string[];
-    }>({ open: false, type: 'progress', title: '', logs: [] });
-    const statusLogsRef = useRef<string[]>([]);
-
-    const addStatusLog = (msg: string) => {
-        statusLogsRef.current = [...statusLogsRef.current, msg];
-        setStatusModal(prev => ({ ...prev, logs: [...statusLogsRef.current] }));
-    };
+    const status = useStatusModal();
 
     const handleGenerate = async () => {
         if (!prompt.trim()) return;
 
         setIsGenerating(true);
         setError(null);
-        statusLogsRef.current = [];
         const modelInfo = getImageModel(selectedModel);
-        setStatusModal({
-            open: true,
-            type: 'progress',
-            title: `Gerando via ${modelInfo?.label ?? selectedModel}...`,
-            logs: []
-        });
+        status.open(`Gerando via ${modelInfo?.label ?? selectedModel}...`);
 
         try {
             // Map aspect ratio to dimensions
@@ -98,12 +78,12 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                 throw new Error(`Chave de API para ${model.badge} não configurada. Vá em Configurações.`);
             }
 
-            addStatusLog(`🔑 Usando provider: ${model.badge}`);
-            addStatusLog(`📐 Dimensões: ${width}x${height} (${aspectRatio})`);
-            addStatusLog(`🎯 Variações: ${numImages}`);
+            status.log(`🔑 Usando provider: ${model.badge}`);
+            status.log(`📐 Dimensões: ${width}x${height} (${aspectRatio})`);
+            status.log(`🎯 Variações: ${numImages}`);
 
             const provider = getImageProvider(selectedModel);
-            const result = await provider.generate(prompt, width, height, numImages, apiKey, addStatusLog);
+            const result = await provider.generate(prompt, width, height, numImages, apiKey, status.log);
             const resultUrls = result.urls;
 
             const newGeneratedImages: GeneratedImage[] = resultUrls.map(url => ({
@@ -119,22 +99,12 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
             }
 
             setImages(prev => [...newGeneratedImages, ...prev]);
-            setStatusModal(prev => ({
-                ...prev,
-                type: 'success',
-                title: 'Geração concluída!',
-                logs: [...prev.logs, `✅ ${newGeneratedImages.length} imagem(ns) gerada(s) com sucesso!`]
-            }));
+            status.success('Geração concluída!');
         } catch (err) {
             console.error("Erro na geração:", err);
             const errorMsg = err instanceof Error ? err.message : "Erro desconhecido ao gerar imagens.";
             setError(errorMsg);
-            setStatusModal(prev => ({
-                ...prev,
-                type: 'error',
-                title: 'Falha na geração',
-                logs: [...prev.logs, `❌ ${errorMsg}`]
-            }));
+            status.error(errorMsg, 'Falha na geração');
         } finally {
             setIsGenerating(false);
         }
@@ -256,13 +226,12 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
 
                         <div className="flex items-center gap-3">
                             {error && (
-                                <button
-                                    onClick={() => setStatusModal(prev => ({ ...prev, open: true }))}
-                                    className="text-red-500 text-[10px] font-bold max-w-[250px] truncate hover:underline cursor-pointer"
-                                    title="Clique para ver detalhes"
+                                <span
+                                    className="text-red-500 text-[10px] font-bold max-w-[250px] truncate cursor-default"
+                                    title={error}
                                 >
-                                    ⚠️ {error} (ver detalhes)
-                                </button>
+                                    ⚠️ {error}
+                                </span>
                             )}
                             <button
                                 onClick={handleGenerate}
@@ -393,63 +362,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                 </div>
             )}
 
-            {/* Status Modal */}
-            {statusModal.open && (
-                <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-                        {/* Header */}
-                        <div className={`px-6 py-4 flex items-center gap-3 ${statusModal.type === 'progress' ? 'bg-blue-50 text-blue-700' :
-                            statusModal.type === 'success' ? 'bg-emerald-50 text-emerald-700' :
-                                'bg-red-50 text-red-700'
-                            }`}>
-                            {statusModal.type === 'progress' && <Loader2 size={20} className="animate-spin" />}
-                            {statusModal.type === 'success' && <CheckCircle2 size={20} />}
-                            {statusModal.type === 'error' && <AlertTriangle size={20} />}
-                            <h3 className="font-bold text-base flex-1">{statusModal.title}</h3>
-                            {statusModal.type !== 'progress' && (
-                                <button
-                                    onClick={() => setStatusModal(prev => ({ ...prev, open: false }))}
-                                    className="p-1 hover:bg-black/10 rounded-full transition"
-                                >
-                                    <X size={16} />
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Logs */}
-                        <div className="px-6 py-4 h-[300px] overflow-y-auto space-y-1.5">
-                            {statusModal.logs.map((log, i) => (
-                                <div key={i} className="text-sm text-slate-700 font-mono flex items-start gap-2">
-                                    <span className="text-slate-300 text-xs mt-0.5 select-none">{String(i + 1).padStart(2, '0')}</span>
-                                    <span className="break-all">{log}</span>
-                                </div>
-                            ))}
-                            {statusModal.type === 'progress' && statusModal.logs.length > 0 && (
-                                <div className="text-sm text-blue-400 font-mono flex items-center gap-2 animate-pulse">
-                                    <Loader2 size={12} className="animate-spin" />
-                                    Processando...
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Footer */}
-                        <div className="px-6 py-4 border-t border-slate-100 flex justify-end">
-                            <button
-                                onClick={() => setStatusModal(prev => ({ ...prev, open: false }))}
-                                disabled={statusModal.type === 'progress'}
-                                className={`px-6 py-2.5 rounded-full font-bold text-sm text-white transition ${statusModal.type === 'progress'
-                                        ? 'bg-slate-300 cursor-not-allowed'
-                                        : statusModal.type === 'success'
-                                            ? 'bg-emerald-600 hover:bg-emerald-500'
-                                            : 'bg-red-600 hover:bg-red-500'
-                                    }`}
-                            >
-                                {statusModal.type === 'progress' ? 'Aguarde...' : 'Fechar'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };
