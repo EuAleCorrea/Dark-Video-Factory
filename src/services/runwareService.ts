@@ -15,37 +15,57 @@ interface RunwareResponse {
     errors?: { code: number; message: string }[];
 }
 
+export interface RunwareModelConfig {
+    modelId?: string;
+    steps?: number;
+    CFGScale?: number;
+    scheduler?: string;
+    providerSettings?: Record<string, unknown>;
+}
+
 export const generateImageRunware = async (
     prompt: string,
     width: number,
     height: number,
     numberResults: number,
-    apiKey: string
+    apiKey: string,
+    config?: RunwareModelConfig
 ): Promise<string[]> => {
     if (!apiKey) {
         throw new Error('Chave de API da RunWare não configurada.');
     }
 
     const taskUUID = uuidv4();
+    const model = config?.modelId ?? 'runware:100@1';
+    const isFluxModel = model.startsWith('runware:');
 
-    // API expects an ARRAY of task objects
-    const requestBody = [
-        {
-            taskType: "imageInference",
-            taskUUID: taskUUID,
-            positivePrompt: prompt,
-            width: width,
-            height: height,
-            model: "runware:100@1",
-            numberResults: numberResults,
-            outputType: "URL",
-            outputFormat: "JPEG",
-            steps: 4,
-            CFGScale: 1,
-            scheduler: "FlowMatchEulerDiscreteScheduler",
-            includeCost: true
+    const baseTask: Record<string, unknown> = {
+        taskType: "imageInference",
+        taskUUID,
+        positivePrompt: prompt,
+        width,
+        height,
+        model,
+        numberResults,
+        outputFormat: "JPEG",
+        includeCost: true,
+    };
+
+    if (isFluxModel) {
+        // FLUX models: outputType as string, with steps/CFGScale/scheduler
+        baseTask.outputType = "URL";
+        baseTask.steps = config?.steps ?? 4;
+        baseTask.CFGScale = config?.CFGScale ?? 1;
+        baseTask.scheduler = config?.scheduler ?? "FlowMatchEulerDiscreteScheduler";
+    } else {
+        // External models (Google, Ideogram, etc): outputType as array, no steps/CFGScale
+        baseTask.outputType = ["URL"];
+        if (config?.providerSettings) {
+            baseTask.providerSettings = config.providerSettings;
         }
-    ];
+    }
+
+    const requestBody = [baseTask];
 
     try {
         console.log("RunWare Request:", JSON.stringify(requestBody, null, 2));
