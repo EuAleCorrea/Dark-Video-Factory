@@ -1,6 +1,6 @@
 # Dark Video Factory — PRD (Product Requirements Document)
 
-> **Última atualização:** 2026-02-17 10:50
+> **Última atualização:** 2026-02-19 14:50
 > **Consulta obrigatória:** Este documento deve ser lido no início de cada sessão antes de qualquer implementação.
 
 ---
@@ -275,6 +275,8 @@ Strategy Pattern + Registry para geração de imagens com múltiplos providers.
 
 **Para adicionar novo modelo:** (1) criar classe `implements IImageProvider`, (2) add ao `IMAGE_MODELS[]`, (3) registrar no switch de `getImageProvider()`.
 
+**Segurança:** API keys são mascaradas nos logs via `maskGeminiKey()` — exibe apenas 5+3 caracteres.
+
 ### 4.13 Gemini Key Manager (`lib/geminiKeyManager.ts`)
 
 Gerenciamento de múltiplas chaves Gemini com rotação automática.
@@ -344,16 +346,22 @@ Interface dedicada para geração TTS via Google Gemini.
 
 ### ImageGeneratorPanel (`components/ImageGeneratorPanel.tsx`)
 
-Interface dedicada para geração de imagens via RunWare (Flux.1 Schnell).
+Interface dedicada para geração e edição de imagens.
 
 | Feature | Detalhes |
 |---------|----------|
 | Prompt | Campo de texto livre para descrever a imagem desejada |
-| Aspect Ratio | Seletor de proporção (1:1, 16:9, 9:16, 4:3) |
+| Aspect Ratio | Seletor de proporção (16:9, 9:16) |
 | Quantidade | Geração de 1 a 4 imagens por vez |
-| Galeria | Grid de resultados com zoom, download e remoção |
+| Galeria | Grid de resultados com zoom, download e remoção (últimas 3 auto-carregadas do disco) |
+| Auto-Save | Imagens geradas são salvas automaticamente em `Pictures/DarkVideoFactory/Generated/` |
+| File Picker | Importar imagens do disco com conversão base64 otimizada (chunked O(n)) |
+| Mini-Canva | Editor de thumbnails (`ThumbnailEditorModal`) com Fabric.js, textos, templates, fontes |
+| Lazy Fonts | 5 fontes base carregam no startup; 40+ fontes restantes carregam sob demanda |
+| Alinhamento | Snap magnético a centro do canvas e entre objetos (com `getBoundingRect()` cacheado) |
 | Download | Diálogo nativo "Salvar como" via `tauri-plugin-dialog` → `write_file` |
 | Preview | Lightbox com imagem em tela cheia ao clicar |
+| Lógica de biblioteca | Extraída para hook `useImageLibrary` (carregamento, save, delete, file picker) |
 
 ### PromptDebugModal (`components/PromptDebugModal.tsx`)
 
@@ -531,11 +539,13 @@ Dark Video Factory/
 │   ├── App.tsx                    # Componente raiz (42KB)
 │   ├── main.tsx                   # Entry point React
 │   ├── index.css                  # Estilos globais
-│   ├── types.ts                   # Todos os tipos e interfaces
+│   ├── types.ts                   # Tipos globais do pipeline
+│   ├── types/
+│   │   └── images.ts              # Tipo GeneratedImage compartilhado
 │   ├── components/                # 24 componentes React
 │   ├── services/                  # 12 serviços
 │   ├── lib/                       # 9 libs utilitárias
-│   └── hooks/                     # 1 hook (useJobMonitor)
+│   └── hooks/                     # 2 hooks (useJobMonitor, useImageLibrary)
 ├── src-tauri/                     # Backend Rust (Tauri v2)
 ├── GEMINI.md                      # Regras do projeto para IA
 ├── docs/
@@ -618,3 +628,7 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-02-17 | **Image Providers Expansion**: Adicionado suporte a **Ideogram** (`ideogram:4@1`) e migrado **Nano Banana** para RunWare (`google:4@2`) devido a quotas da API Gemini. Implementado `providerSettings` dinâmico e `dimension snapping` para ambos. |
 | 2026-02-17 | **Image Providers Architecture**: Strategy Pattern + Registry (`imageProviders.ts`) para múltiplos providers de imagem (RunWare FLUX.1 + NanoBanana Gemini). Rotação automática de chaves Gemini (`geminiKeyManager.ts`). Modal de status com logs em tempo real. |
 | 2026-02-17 | **Global Status Modal**: Extraído modal de status para `StatusModalContext.tsx` (Context + Provider + Hook). Renderizado uma vez no `App.tsx`, qualquer componente usa `useStatusModal()` para abrir/logar/fechar. API: `open()`, `log()`, `success()`, `error()`, `close()`. |
+| 2026-02-19 | **Mini-Canva Editor**: Implementado `ThumbnailEditorModal` com Fabric.js — editor visual de thumbnails com textos, templates, Google Fonts (40+), alinhamento magnético, e save/export |
+| 2026-02-19 | **Auto-Save & Image Library**: Imagens geradas são salvas automaticamente no disco. Galeria carrega últimas 3 imagens salvas no startup. File picker para importar imagens externas com conversão base64 chunked (O(n)) |
+| 2026-02-19 | **Revisão Técnica (12 melhorias)**: (Alta) Persist edits, base64 O(n), remove shell permissions, mask API keys, remove orphaned permission. (Média) Shared `GeneratedImage` type, remove thinking comments, replace `alert()` → `status.error()`. (Baixa) Extract `useImageLibrary` hook, lazy Google Fonts, cache `getBoundingRect()`, remove empty ResizeObserver |
+| 2026-02-19 | **Security Hardening**: Removidas permissões `shell:allow-execute/spawn/stdin-write` e `opener:allow-reveal-item-in-dir` do `default.json`. API keys mascaradas nos logs via `maskGeminiKey()` |

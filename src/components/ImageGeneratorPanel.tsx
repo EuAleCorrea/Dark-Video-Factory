@@ -15,21 +15,15 @@ import {
     RefreshCw,
     X,
     ZoomIn,
-    Info
+    Info,
+    Pencil
 } from 'lucide-react';
 import { IMAGE_MODELS, getImageProvider, getImageModel } from '../services/imageProviders';
 import { EngineConfig } from '../types';
+import type { GeneratedImage } from '../types/images';
 import { useStatusModal } from '../contexts/StatusModalContext';
-import { save } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
-
-interface GeneratedImage {
-    id: string;
-    url: string;
-    prompt: string;
-    aspectRatio: string;
-    timestamp: number;
-}
+import { ThumbnailEditorModal } from './ThumbnailEditorModal';
+import { useImageLibrary } from '../hooks/useImageLibrary';
 
 interface ImageGeneratorPanelProps {
     config: EngineConfig;
@@ -38,13 +32,14 @@ interface ImageGeneratorPanelProps {
 export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config }) => {
     const [prompt, setPrompt] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
-    const [images, setImages] = useState<GeneratedImage[]>([]);
     const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
     const [numImages, setNumImages] = useState(1);
     const [error, setError] = useState<string | null>(null);
     const [lightboxImage, setLightboxImage] = useState<GeneratedImage | null>(null);
+    const [editingImage, setEditingImage] = useState<GeneratedImage | null>(null);
     const [selectedModel, setSelectedModel] = useState(IMAGE_MODELS[0].id);
     const status = useStatusModal();
+    const { images, setImages, autoSaveImage, handleOpenFolder, handleDownload, handleRemove, loadSavedImages } = useImageLibrary(status.error);
 
     const handleGenerate = async () => {
         if (!prompt.trim()) return;
@@ -55,7 +50,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
         status.open(`Gerando via ${modelInfo?.label ?? selectedModel}...`);
 
         try {
-            // Map aspect ratio to dimensions
             let width = 1024;
             let height = 1024;
 
@@ -67,7 +61,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                 height = 1792;
             }
 
-            // Resolve modelo e provider via registry
             const model = getImageModel(selectedModel);
             if (!model) {
                 throw new Error(`Modelo "${selectedModel}" não encontrado.`);
@@ -94,6 +87,10 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                 timestamp: Date.now()
             }));
 
+            newGeneratedImages.forEach(img => {
+                autoSaveImage(img.url, img.id);
+            });
+
             if (newGeneratedImages.length === 0) {
                 throw new Error("Nenhuma imagem foi gerada.");
             }
@@ -110,30 +107,30 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
         }
     };
 
-    const handleDownload = async (image: GeneratedImage) => {
-        try {
-            // For remote URLs, we need to fetch the blob first
-            const response = await fetch(image.url);
-            const blob = await response.blob();
-            const arrayBuffer = await blob.arrayBuffer();
-            const byteArray = new Uint8Array(arrayBuffer);
+    const handleSaveEditedImage = (blob: Blob) => {
+        if (!editingImage) return;
 
-            const filePath = await save({
-                filters: [{ name: 'Images', extensions: ['png'] }],
-                defaultPath: `generated-${image.id}.png`
-            });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64data = reader.result as string;
 
-            if (filePath) {
-                await invoke('write_file', { path: filePath, content: Array.from(byteArray) });
-            }
-        } catch (err) {
-            console.error("Erro ao salvar:", err);
-            alert("Erro ao salvar imagem: " + (err instanceof Error ? err.message : "Erro desconhecido"));
-        }
-    };
+            const newImage: GeneratedImage = {
+                id: Math.random().toString(36).substr(2, 9),
+                url: base64data,
+                prompt: editingImage.prompt + " (Editada)",
+                aspectRatio: editingImage.aspectRatio,
+                timestamp: Date.now()
+            };
 
-    const handleRemove = (id: string) => {
-        setImages(prev => prev.filter(img => img.id !== id));
+            setImages(prev => [newImage, ...prev]);
+            setEditingImage(null);
+            status.success("Thumbnail editada salva com sucesso!");
+
+            autoSaveImage(base64data, newImage.id).catch(err =>
+                console.warn('[Editor] Falha ao salvar imagem editada:', err)
+            );
+        };
+        reader.readAsDataURL(blob);
     };
 
     return (
@@ -258,15 +255,23 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                 <div className="overflow-y-auto flex-1 custom-scrollbar min-h-0 pb-10">
                     <div className="w-full">
                         <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Suas Criações</h2>
-                            {images.length > 0 && (
+                            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Últimas Criações</h2>
+                            <div className="flex items-center gap-4">
                                 <button
-                                    onClick={() => setImages([])}
-                                    className="text-[10px] font-bold text-slate-400 hover:text-red-500 transition-colors uppercase"
+                                    onClick={() => handleOpenFolder(setEditingImage)}
+                                    className="text-[10px] font-bold text-slate-500 hover:text-emerald-600 transition-colors uppercase flex items-center gap-1.5"
                                 >
-                                    Limpar Tudo
+                                    <Search size={14} />
+                                    Escolher Imagem
                                 </button>
-                            )}
+                                <button
+                                    onClick={() => loadSavedImages()}
+                                    className="text-[10px] font-bold text-slate-500 hover:text-blue-500 transition-colors uppercase flex items-center gap-1.5"
+                                >
+                                    <RefreshCw size={12} />
+                                    Atualizar
+                                </button>
+                            </div>
                         </div>
 
                         {images.length > 0 ? (
@@ -294,8 +299,15 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                                                 <ZoomIn size={20} />
                                             </button>
                                             <button
+                                                onClick={(e) => { e.stopPropagation(); setEditingImage(image); }}
+                                                className="bg-white hover:bg-indigo-50 text-slate-800 hover:text-indigo-600 p-4 rounded-full shadow-2xl scale-90 group-hover:scale-100 transition-all duration-300 delay-75"
+                                                title="Editar Thumbnail"
+                                            >
+                                                <Pencil size={20} />
+                                            </button>
+                                            <button
                                                 onClick={(e) => { e.stopPropagation(); handleDownload(image); }}
-                                                className="bg-white hover:bg-emerald-50 text-slate-800 hover:text-emerald-600 p-4 rounded-full shadow-2xl scale-90 group-hover:scale-100 transition-all duration-300 delay-75"
+                                                className="bg-white hover:bg-emerald-50 text-slate-800 hover:text-emerald-600 p-4 rounded-full shadow-2xl scale-90 group-hover:scale-100 transition-all duration-300 delay-100"
                                             >
                                                 <Download size={20} />
                                             </button>
@@ -362,6 +374,14 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                 </div>
             )}
 
+            {/* Editor Modal */}
+            {editingImage && (
+                <ThumbnailEditorModal
+                    image={editingImage}
+                    onClose={() => setEditingImage(null)}
+                    onSave={handleSaveEditedImage}
+                />
+            )}
         </div>
     );
 };

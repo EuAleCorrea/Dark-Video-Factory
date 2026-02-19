@@ -10,7 +10,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { generateImageRunware } from "./runwareService";
-import { withGeminiKeyRotation } from "../lib/geminiKeyManager";
+import { withGeminiKeyRotation, maskGeminiKey } from "../lib/geminiKeyManager";
 
 // =============================================
 // INTERFACES
@@ -257,7 +257,7 @@ class NanoBananaProvider implements IImageProvider {
                 try {
                     const modelName = 'gemini-2.5-flash-image';
                     onLog?.(`📡 Modelo: ${modelName}`);
-                    onLog?.(`🔑 Chave: ${singleKey.substring(0, 8)}...${singleKey.substring(singleKey.length - 4)}`);
+                    onLog?.(`🔑 Chave: ${maskGeminiKey(singleKey)}`);
 
                     const response = await ai.models.generateContent({
                         model: modelName,
