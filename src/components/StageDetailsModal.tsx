@@ -131,16 +131,23 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
         setGeneratingIds(prev => [...new Set([...prev, ...ids])]);
 
         try {
-            const imageModelId = config.providers.image === 'FLUX' ? 'FLUX.1' : 'Nano Banana';
+            // Prioridade: Modelo selecionado em Configurações > Provedor Global > Fallback
+            let imageModelId = config.imageModel;
+            if (!imageModelId) {
+                imageModelId = config.providers.image === 'POLLINATIONS' ? 'FLUX.1-Free' :
+                    config.providers.image === 'FLUX' ? 'FLUX.1' : 'Nano Banana';
+            }
+
             const model = getImageModel(imageModelId);
             const provider = getImageProvider(imageModelId);
 
             if (!model) throw new Error(`Modelo ${imageModelId} não encontrado.`);
 
             // Obter a chave correta baseada no apiKeyField do modelo (flux para RunWare, gemini para Direct)
-            const apiKey = (config.apiKeys as any)[model.apiKeyField] as string;
+            // Pollinations (badge FREE) ignora chave
+            const apiKey = (model.badge === 'FREE') ? 'no-key' : ((config.apiKeys as any)[model.apiKeyField] as string);
 
-            if (!apiKey) {
+            if (!apiKey && model.badge !== 'FREE') {
                 alert(`API Key (${model.apiKeyField}) para ${imageModelId} não está configurada.`);
                 setGeneratingIds(prev => prev.filter(gid => !ids.includes(gid)));
                 return;

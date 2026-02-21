@@ -77,6 +77,14 @@ export const IMAGE_MODELS: ImageModel[] = [
         badge: 'RunWare',
         description: 'Ideogram via RunWare — excelente em tipografia e texto em imagens',
     },
+    {
+        id: 'FLUX.1-Free',
+        label: 'FLUX.1 Schnell (Grátis)',
+        provider: 'pollinations',
+        apiKeyField: 'openai', // Dummy field
+        badge: 'FREE',
+        description: 'Geração ilimitada e gratuita via Pollinations.ai (Flux Schnell)',
+    },
 ];
 
 // =============================================
@@ -356,6 +364,45 @@ const providers: Record<string, IImageProvider> = {
     nanoBananaRunware: new NanoBananaRunwareProvider(),
     ideogramRunware: new IdeogramRunwareProvider(),
 };
+
+/**
+ * Pollinations.ai Provider — FLUX.1 (Gratuito e Ilimitado)
+ * Gera imagens 100% grátis sem chaves de API.
+ */
+class PollinationsProvider implements IImageProvider {
+    async generate(
+        prompt: string,
+        width: number,
+        height: number,
+        count: number,
+        _apiKey: string, // Não utilizado
+        onLog?: (msg: string) => void
+    ): Promise<ImageGenerationResult> {
+        onLog?.('🌈 Conectando ao Pollinations.ai (Flux Free)...');
+
+        // Pollinations gera 1 imagem por request de forma síncrona via URL
+        // Vamos gerar os URLs baseados no prompt encodado
+        const urls: string[] = [];
+
+        for (let i = 0; i < count; i++) {
+            // Adicionamos um seed aleatório para garantir imagens diferentes se o count > 1
+            const seed = Math.floor(Math.random() * 1000000);
+            const encodedPrompt = encodeURIComponent(prompt);
+            const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&model=flux&nologo=true`;
+
+            // O Pollinations é tão simples que o "URL" já é a imagem. 
+            // Mas para validar que o serviço está UP, podemos fazer um fetch head ou simples
+            onLog?.(`✨ Gerando URL da imagem ${i + 1}/${count}...`);
+            urls.push(url);
+        }
+
+        onLog?.(`✅ ${urls.length} link(s) gerado(s) (O carregamento real ocorre na UI)`);
+        return { urls };
+    }
+}
+
+// Registrar o novo provider
+(providers as any).pollinations = new PollinationsProvider();
 
 /**
  * Retorna o provider correto para o modelId especificado.

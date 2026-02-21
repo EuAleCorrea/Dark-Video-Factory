@@ -648,10 +648,15 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-02-20 | **Estágio 5 — Legendas**: Implementado `processSubtitlesStage` no `PipelineExecutor`. Integra `smartChunker` (divide em chunks 9-18s), `alignmentEngine` (alinha c/ duração do áudio) e `subtitleGenerator` (gera .ass estilizado). `SubtitlesStageData` expandido com `segments`, `assContent`, `segmentCount`, `totalDuration`. Visualização no `StageDetailsModal` com tabela de segmentos e preview ASS colapsável |
 | 2026-02-21 | **Estágio 6 — Imagens & Storyboard**: Implementado agrupamento de cenas via `storyboardPlanner` (LLM). Geração de imagens agora suporta **multi-select** no Storyboard. Adicionado **Interpretador de Erros via IA** (`interpretErrorWithAI`) usando DeepSeek/OpenRouter para diagnósticos assertivos. Refinamentos de UI: zoom/lightbox no Storyboard, overlay "CRIANDO...", e limpeza nos botões de geração. |
 
-## 14. Interpretador de Erros (IA Diagnostics)
+## 14. Inteligência e Otimização
 
-O sistema conta com uma camada de inteligência (`geminiService.ts -> interpretErrorWithAI`) para lidar com falhas de APIs externas (RunWare, Gemini, etc.).
+O sistema conta com camadas de IA para diagnóstico e redução de custos:
 
-- **Modelo**: `deepseek/deepseek-chat` (OpenRouter)
-- **Tom de voz**: Assertivo, direto e com autoridade.
-- **Funcionamento**: Captura o log técnico bruto e transforma em uma instrução clara de solução para o usuário (ex: "Créditos acabaram" em vez de JSON errors).
+- **Interpretador de Erros (IA Diagnostics)**:
+    - **Modelo**: `deepseek/deepseek-chat` (OpenRouter)
+    - **Tom de voz**: Assertivo, direto e com autoridade.
+    - **Funcionamento**: Transforma logs técnicos em instruções claras para o usuário.
+  
+- **Consolidação de Cenas**: 
+    - **Lógica**: Agrupa segmentos de legenda via `sceneId` no storyboard.
+    - **Economia**: Gera apenas uma imagem por cena e a replica, reduzindo drasticamente as chamadas de API (RunWare).

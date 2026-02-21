@@ -193,15 +193,27 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
                             <select
                                 className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] text-sm font-medium outline-none focus:border-purple-500 transition appearance-none"
                                 value={localConfig.providers.image}
-                                onChange={(e) => handleProviderChange('image', e.target.value)}
+                                onChange={(e) => {
+                                    const provider = e.target.value as any;
+                                    const modelId = provider === 'POLLINATIONS' ? 'FLUX.1-Free' : (provider === 'FLUX' ? 'FLUX.1' : 'Nano Banana');
+                                    setLocalConfig(prev => ({
+                                        ...prev,
+                                        imageModel: modelId,
+                                        providers: { ...prev.providers, image: provider }
+                                    }));
+                                    setIsSaved(false);
+                                }}
                             >
                                 <option value="GEMINI">Gemini Imagen 3 (Rápido)</option>
                                 <option value="FLUX">Flux.1 Pro (Alta Fidelidade)</option>
+                                <option value="POLLINATIONS">Flux.1 Free (Pollinations.ai)</option>
                             </select>
                             <div className="absolute right-3 top-3.5 pointer-events-none text-[#94A3B8]">▼</div>
                         </div>
                         <p className="text-xs text-[#94A3B8] leading-relaxed">
-                            Flux.1 oferece texturas fotorrealistas superiores, mas requer chave BFL paga.
+                            {localConfig.providers.image === 'POLLINATIONS'
+                                ? "O Pollinations oferece Flux Schnell gratuito e ilimitado sem necessidade de chaves."
+                                : "Flux.1 oferece texturas fotorrealistas superiores, mas requer chave BFL paga."}
                         </p>
                     </div>
 
