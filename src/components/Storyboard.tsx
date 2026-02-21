@@ -151,9 +151,16 @@ const Storyboard: React.FC<StoryboardProps> = ({
                             <div className="flex flex-col md:flex-row gap-4 items-start pl-0">
                                 {/* Column 1: Time Indicator & Warnings (Left) */}
                                 <div className={`flex flex-col gap-2 md:w-44 shrink-0 transition-all ${isEditable ? 'md:pl-10' : ''}`}>
-                                    <div className="flex items-center gap-2 text-primary font-mono text-xs font-bold bg-teal-50 px-3 py-1.5 rounded h-fit self-start border border-teal-200 whitespace-nowrap">
-                                        <Clock size={12} />
-                                        {seg.timeRange.split('-').map(t => t.trim().split('.')[0]).join(' - ')}
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 text-primary font-mono text-xs font-bold bg-teal-50 px-3 py-1.5 rounded h-fit border border-teal-200 whitespace-nowrap">
+                                            <Clock size={12} />
+                                            {seg.timeRange.split('-').map(t => t.trim().split('.')[0]).join(' - ')}
+                                        </div>
+                                        {seg.sceneId && (
+                                            <div className="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-1 rounded border border-slate-200" title={`Cena ${seg.sceneId}`}>
+                                                C{seg.sceneId}
+                                            </div>
+                                        )}
                                     </div>
 
                                     {isEditable && (isTooLong || isTooShort) && (

@@ -92,6 +92,7 @@ export interface LogEntry {
 
 export interface StoryboardSegment {
   id: number;
+  sceneId?: number; // Identificador da cena agrupada
   timeRange: string;
   scriptText: string;
   visualPrompt: string;
@@ -124,7 +125,7 @@ export interface VideoJob {
   modelChannel?: string;
   referenceScript?: string;
   referenceMetadata?: any;
-  appliedPromptId?: string; // NOVO: ID do prompt fixado neste vídeo
+  appliedPromptId?: string;
   theme: string;
   status: JobStatus;
   currentStep: PipelineStep;

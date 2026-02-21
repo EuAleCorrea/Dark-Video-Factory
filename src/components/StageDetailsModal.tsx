@@ -159,24 +159,38 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                 return msg.replace("Erro RunWare:", "").trim();
             };
 
+            // ESTRATÉGIA DE CONSOLIDAÇÃO:
+            // Pegamos os IDs selecionados e os agrupamos pelo seu sceneId
+            const sceneGroups: Record<string, number[]> = {};
             for (const id of ids) {
-                const segIdx = updatedSegments.findIndex(s => s.id === id);
+                const seg = subData.segments.find(s => s.id === id);
+                const sId = seg?.sceneId ? `scene_${seg.sceneId}` : `seg_${id}`;
+                if (!sceneGroups[sId]) sceneGroups[sId] = [];
+                sceneGroups[sId].push(id);
+            }
+
+            console.log(`[StageDetails] 📦 Consolidação: ${ids.length} segmentos agrupados em ${Object.keys(sceneGroups).length} cenas únicas.`);
+
+            // Processamos um grupo por vez (uma imagem por cena)
+            for (const [sKey, segmentIdsInScene] of Object.entries(sceneGroups)) {
+                // Usamos o primeiro segmento do grupo como referência para o prompt
+                const firstId = segmentIdsInScene[0];
+                const segIdx = updatedSegments.findIndex(s => s.id === firstId);
                 if (segIdx === -1) {
-                    setGeneratingIds(prev => prev.filter(gid => gid !== id));
+                    setGeneratingIds(prev => prev.filter(gid => !segmentIdsInScene.includes(gid)));
                     continue;
                 }
 
                 const seg = updatedSegments[segIdx];
 
                 try {
-                    console.log(`[StageDetails] 🔄 CENA #${id}: Expandindo prompt...`);
+                    console.log(`[StageDetails] 🔄 CENA ${sKey}: Gerando imagem única para ${segmentIdsInScene.length} segmentos...`);
+
                     const expandedPrompt = await ImagePromptService.expandPrompt(
                         seg.scriptText,
                         stylePrompt,
                         config
                     );
-
-                    console.log(`[StageDetails] ✨ Prompt Expandido (#${id}):`, expandedPrompt);
 
                     const result = await provider.generate(
                         expandedPrompt,
@@ -187,25 +201,31 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     );
 
                     if (result.urls && result.urls.length > 0) {
-                        updatedSegments[segIdx] = {
-                            ...seg,
-                            assets: {
-                                ...seg.assets,
-                                imageUrl: result.urls[0]
+                        const imageUrl = result.urls[0];
+                        // REPLICAÇÃO: Aplicamos a mesma imagem a TODOS os segmentos deste grupo/cena
+                        for (const id of segmentIdsInScene) {
+                            const idx = updatedSegments.findIndex(s => s.id === id);
+                            if (idx !== -1) {
+                                updatedSegments[idx] = {
+                                    ...updatedSegments[idx],
+                                    assets: {
+                                        ...updatedSegments[idx].assets,
+                                        imageUrl
+                                    }
+                                };
                             }
-                        };
-                        successCount++;
-                        console.log(`[StageDetails] ✅ Imagem gerada para cena #${id}`);
+                        }
+                        successCount += segmentIdsInScene.length;
+                        console.log(`[StageDetails] ✅ Imagem replicada para ${segmentIdsInScene.length} segmentos da cena ${sKey}`);
                     } else {
                         throw new Error("API retornou sucesso mas sem URLs de imagem.");
                     }
                 } catch (err: any) {
-                    console.error(`[StageDetails] ❌ Falha na cena #${id}:`, err);
+                    console.error(`[StageDetails] ❌ Falha na cena ${sKey}:`, err);
                     lastErrorMessage = getFriendlyErrorMessage(err);
-                    // IMPORTANTE: stringify em Error retorna {}, por isso pegamos a message ou stack
                     lastRawError = err.message || String(err);
                 } finally {
-                    setGeneratingIds(prev => prev.filter(gid => gid !== id));
+                    setGeneratingIds(prev => prev.filter(gid => !segmentIdsInScene.includes(gid)));
                 }
             }
 
