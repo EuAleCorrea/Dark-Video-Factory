@@ -38,7 +38,8 @@ const callLLM = async (
   userPrompt: string,
   modelId: string,
   provider: 'GEMINI' | 'OPENAI' | 'OPENROUTER',
-  config: EngineConfig
+  config: EngineConfig,
+  responseType: 'text' | 'json' = 'json'
 ): Promise<string> => {
 
   // Smart routing: se o modelo é Gemini e temos a chave do Google, usar API direta
@@ -55,14 +56,14 @@ const callLLM = async (
   if (effectiveProvider === 'GEMINI') {
     return withGeminiKeyRotation(config.apiKeys.gemini, async (apiKey, keyIdx, totalKeys) => {
       const ai = getGeminiClient(apiKey);
-      console.log(`[LLM Router] → Gemini Direct (${modelId})${totalKeys > 1 ? ` [chave ${keyIdx + 1}/${totalKeys}]` : ''}`);
+      console.log(`[LLM Router] → Gemini Direct (${modelId})${totalKeys > 1 ? ` [chave ${keyIdx + 1}/${totalKeys}]` : ''} | Format: ${responseType}`);
 
       try {
         const response = await ai.models.generateContent({
           model: modelId,
           contents: `${systemPrompt}\n\n${userPrompt}`,
           config: {
-            responseMimeType: "application/json",
+            responseMimeType: responseType === 'json' ? "application/json" : "text/plain",
           },
         });
 
@@ -83,7 +84,19 @@ const callLLM = async (
   if (effectiveProvider === 'OPENAI') {
     const apiKey = config.apiKeys.openai;
     if (!apiKey) throw new Error("Chave da API OpenAI não encontrada.");
-    console.log(`[LLM Router] → OpenAI (${modelId})`);
+    console.log(`[LLM Router] → OpenAI (${modelId}) | Format: ${responseType}`);
+
+    const body: any = {
+      model: modelId,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ]
+    };
+
+    if (responseType === 'json') {
+      body.response_format = { type: "json_object" };
+    }
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -91,14 +104,7 @@ const callLLM = async (
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        response_format: { type: "json_object" }
-      })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
@@ -113,7 +119,19 @@ const callLLM = async (
   if (effectiveProvider === 'OPENROUTER') {
     const apiKey = config.apiKeys.openrouter;
     if (!apiKey) throw new Error("Chave da API OpenRouter não encontrada.");
-    console.log(`[LLM Router] → OpenRouter (${modelId})`);
+    console.log(`[LLM Router] → OpenRouter (${modelId}) | Format: ${responseType}`);
+
+    const body: any = {
+      model: modelId,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ]
+    };
+
+    if (responseType === 'json') {
+      body.response_format = { type: "json_object" };
+    }
 
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -123,14 +141,7 @@ const callLLM = async (
         'HTTP-Referer': 'https://darkvideofactory.app',
         'X-Title': 'Dark Video Factory'
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        response_format: { type: "json_object" }
-      })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
@@ -139,7 +150,13 @@ const callLLM = async (
     }
     const data: OpenAICompletionResponse = await response.json();
     let content = data.choices[0].message.content;
-    content = content.replace(/^```json\n|\n```$/g, '');
+
+    // Se for texto plano mas vier com blocos de código markdown, podemos limpar se necessário
+    // mas por enquanto vamos retornar o bruto. Para JSON limpamos as aspas.
+    if (responseType === 'json') {
+      content = content.replace(/^```json\n|\n```$/g, '');
+    }
+
     return content;
   }
 
@@ -147,18 +164,19 @@ const callLLM = async (
 };
 
 // Wrapper with exponential backoff retry
-const callLLMWithRetry = async (
+export const callLLMWithRetry = async (
   systemPrompt: string,
   userPrompt: string,
   modelId: string,
   provider: 'GEMINI' | 'OPENAI' | 'OPENROUTER',
-  config: EngineConfig
+  config: EngineConfig,
+  responseType: 'text' | 'json' = 'json'
 ): Promise<string> => {
-  let lastError: unknown;
+  let lastError: any;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await callLLM(systemPrompt, userPrompt, modelId, provider, config);
+      return await callLLM(systemPrompt, userPrompt, modelId, provider, config, responseType);
     } catch (error) {
       lastError = error;
 
@@ -573,4 +591,56 @@ export const generateSpeech = async (text: string, voiceId: string = 'Kore', con
     }
     return undefined; // TypeScript safety
   });
+};
+
+/**
+ * 5. INTERPRETADOR DE ERROS (IA AMIGÁVEL)
+ * Transforma erros técnicos em mensagens simples para o usuário.
+ */
+export const interpretErrorWithAI = async (
+  errorContext: string,
+  config: EngineConfig
+): Promise<string> => {
+  const systemPrompt = `Você é o Especialista de Diagnóstico do Dark Video Factory.
+Sua missão é ler um log técnico de erro e dizer EXATAMENTE o que aconteceu com CONVICÇÃO e AUTORIDADE.
+
+DIRETRIZES DE ESTILO:
+1. Seja DIRETO e ASSERTIVO. Não use "parece que", "talvez", ou "possivelmente".
+2. Identifique a causa raiz:
+   - Se ver 'insufficientCredits': Diga "💰 Seus créditos na RunWare acabaram. Você precisa recarregar seu saldo para continuar."
+   - Se ver '401' ou 'Unauthorized': Diga "🔑 Sua chave de API está incorreta ou expirou. Atualize a chave nas configurações agora."
+   - Se ver 'Failed to fetch': Diga "🌐 Erro de conexão! O app não conseguiu alcançar os servidores. Verifique sua internet."
+3. Use um tom de especialista que resolve o problema.
+4. Máximo de 20 palavras.
+5. Português do Brasil.
+
+SAÍDA: Apenas a frase assertiva de diagnóstico.`;
+
+  const userPrompt = `ERRO BRUTO PARA INTERPRETAR:\n${errorContext}`;
+
+  try {
+    // Usamos o DeepSeek Chat do OpenRouter para diagnósticos precisos e com convicção
+    const response = await callLLMWithRetry(
+      systemPrompt,
+      userPrompt,
+      "deepseek/deepseek-chat",
+      "OPENROUTER",
+      config,
+      'text'
+    );
+    return response.trim();
+  } catch (e) {
+    console.warn("[Error Interpreter] Falha ao usar IA para interpretar erro:", e);
+
+    // Fallback assertivo (manual) se a comunicação com OpenRouter falhar
+    const raw = errorContext.toLowerCase();
+    if (raw.includes("insufficient") || raw.includes("credits") || raw.includes("balance")) {
+      return "💰 Seus créditos na RunWare acabaram totalmente. Recarregue seu saldo para continuar gerando imagens.";
+    }
+    if (raw.includes("401") || raw.includes("unauthorized") || raw.includes("key")) {
+      return "🔑 Sua chave de API está incorreta ou expirou. Atualize nos ajustes.";
+    }
+
+    return "Ocorreu um problema técnico na comunicação com o provedor. Verifique sua conta e conexão.";
+  }
 };

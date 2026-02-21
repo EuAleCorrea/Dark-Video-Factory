@@ -7,6 +7,11 @@ import { ChannelProfile, StageDataMap } from "../types";
 import { pcmToWav, getAudioDuration } from "../lib/audioUtils";
 import { saveAudio } from "./AudioStorageService";
 import { compressProjectAudio } from "./AudioCompressService";
+import { smartChunkScript } from "../lib/smartChunker";
+import { alignStoryboardToAudio } from "../lib/alignmentEngine";
+import { generateAssContent } from "../lib/subtitleGenerator";
+import { StoryboardSegment } from "../types";
+import { planStoryboard } from "./storyboardPlanner";
 
 export interface PromptPreviewRequest {
     stage: 'P1' | 'P2';
@@ -54,6 +59,10 @@ export class PipelineExecutor {
                     return await this.processAudioStage(project, profile, config);
                 case PipelineStage.AUDIO_COMPRESS:
                     return await this.processAudioCompressStage(project);
+                case PipelineStage.SUBTITLES:
+                    return await this.processSubtitlesStage(project, profile);
+                case PipelineStage.IMAGES:
+                    return await this.processImagesStage(project, profile);
                 default:
                     console.log(`No auto-process defined for stage ${project.currentStage}`);
                     await this.projectService.updateProject(project.id, { status: "ready" });
@@ -169,7 +178,7 @@ export class PipelineExecutor {
         }
 
         // Resolve model: channel-specific or global fallback
-        const modelId = profile.scriptingModel || config.scriptingModel || 'gemini-3-flash-preview';
+        const modelId = profile.scriptingModel || config.scriptingModel || 'gemini-1.5-flash';
         const provider = profile.scriptingProvider || config.scriptingProvider || config.providers.scripting || 'GEMINI';
 
         // Load active ChannelPrompt
@@ -390,10 +399,135 @@ SAÍDA (JSON STRICT):
             compressionRatio: result.compressionRatio,
             format: result.format,
             bitrate: result.bitrate,
+            duration: project.stageData.audio?.duration,
             mode: 'auto',
         };
 
         console.log(`[Pipeline] ✅ Compressão concluída: ${result.compressionRatio}% redução`);
         return await this.projectService.advanceStage(project, { audio_compress: compressData });
+    }
+
+    /**
+     * LEGENDAS — Storyboard + ASS
+     * 1. Lê roteiro (P1) e duração do áudio
+     * 2. Divide em segmentos de 9-18s (smartChunker)
+     * 3. Alinha tempos com duração real do áudio (alignmentEngine)
+     * 4. Gera conteúdo .ass estilizado (subtitleGenerator)
+     * 5. Salva dados e avança para estágio IMAGES
+     */
+    private async processSubtitlesStage(
+        project: VideoProject,
+        profile: ChannelProfile
+    ): Promise<VideoProject> {
+        console.log(`[Pipeline] ====== LEGENDAS — Storyboard + ASS ======`);
+
+        // 1. Obter roteiro
+        const scriptData = project.stageData.script;
+        if (!scriptData?.text) {
+            throw new Error("Roteiro não encontrado. Volte ao estágio Roteiro e processe novamente.");
+        }
+
+        // 2. Obter duração do áudio (preferência: audio_compress > audio)
+        const audioDuration = project.stageData.audio_compress?.duration
+            || project.stageData.audio?.duration;
+
+        if (!audioDuration || audioDuration <= 0) {
+            throw new Error(
+                "Duração do áudio não encontrada. Verifique se os estágios de Áudio e Compressão foram concluídos corretamente."
+            );
+        }
+
+        console.log(`[Pipeline] 📝 Roteiro: ${scriptData.text.length} chars, ~${scriptData.wordCount} palavras`);
+        console.log(`[Pipeline] ⏱️ Duração total do áudio: ${audioDuration.toFixed(1)}s`);
+
+        // 3. Dividir em segmentos (smart chunking)
+        const chunks = smartChunkScript(scriptData.text);
+        console.log(`[Pipeline] 🧩 Smart Chunker: ${chunks.length} segmentos criados`);
+
+        // 4. Converter chunks para StoryboardSegments
+        const rawSegments: StoryboardSegment[] = chunks.map(chunk => ({
+            id: chunk.id,
+            timeRange: '',
+            scriptText: chunk.text,
+            visualPrompt: '',
+            duration: chunk.durationEstimate,
+        }));
+
+        // 5. Alinhar com duração real do áudio
+        const alignedSegments = alignStoryboardToAudio(rawSegments, audioDuration);
+        console.log(`[Pipeline] 🎯 Segmentos alinhados com áudio (${audioDuration.toFixed(1)}s total)`);
+
+        alignedSegments.forEach(seg => {
+            console.log(`[Pipeline]   Segmento ${seg.id}: ${seg.timeRange} (${seg.duration.toFixed(1)}s) — ${seg.scriptText.substring(0, 50)}...`);
+        });
+
+        // 6. Gerar conteúdo ASS
+        const assContent = generateAssContent(alignedSegments, profile);
+        console.log(`[Pipeline] 📄 Conteúdo ASS gerado: ${assContent.length} chars`);
+
+        // 7. Salvar e avançar
+        const subtitlesData: StageDataMap['subtitles'] = {
+            srtContent: '',
+            assContent,
+            segments: alignedSegments,
+            segmentCount: alignedSegments.length,
+            totalDuration: audioDuration,
+            wordCount: scriptData.wordCount,
+            mode: 'auto',
+        };
+
+        console.log(`[Pipeline] ✅ Legendas geradas: ${alignedSegments.length} segmentos, ${audioDuration.toFixed(1)}s`);
+        return await this.projectService.advanceStage(project, { subtitles: subtitlesData });
+    }
+
+    /**
+     * IMAGENS — Agrupamento de Cenas e Prompts
+     * 1. Lê os segmentos gerados no estágio SUBTITLES
+     * 2. Usa o StoryboardPlanner para agrupar em cenas e gerar visualPrompts
+     * 3. Atualiza os segmentos no projeto
+     * 4. Define status para 'review' para o usuário revisar os prompts
+     */
+    private async processImagesStage(
+        project: VideoProject,
+        profile: ChannelProfile
+    ): Promise<VideoProject> {
+        console.log(`[Pipeline] ====== IMAGENS — Agrupamento de Cenas ======`);
+
+        const subtitleData = project.stageData.subtitles;
+        if (!subtitleData?.segments || subtitleData.segments.length === 0) {
+            throw new Error("Segmentos do storyboard não encontrados. Volte ao estágio Legendas.");
+        }
+
+        const config = this.getConfig();
+
+        // 1. Planejar o storyboard (agrupar cenas + prompts)
+        // Por padrão, usa o OpenRouter se o usuário não definiu um modelo de roteirização específico que tenha fallback
+        const updatedSegments = await planStoryboard(subtitleData.segments, profile, config);
+
+        // 2. Atualizar o estágio de legendas com os novos segmentos (agora com visualPrompt)
+        const updatedSubtitleData = {
+            ...subtitleData,
+            segments: updatedSegments
+        };
+
+        // 3. Atualizar o projeto e aguardar revisão
+        await this.projectService.updateProject(project.id, {
+            status: 'review',
+            stageData: {
+                ...project.stageData,
+                subtitles: updatedSubtitleData
+            }
+        });
+
+        console.log(`[Pipeline] ✅ Agrupamento de cenas concluído. Status definido para 'review'.`);
+
+        return {
+            ...project,
+            status: 'review',
+            stageData: {
+                ...project.stageData,
+                subtitles: updatedSubtitleData
+            }
+        };
     }
 }

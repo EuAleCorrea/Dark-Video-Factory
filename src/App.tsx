@@ -5,7 +5,7 @@ import {
   RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap, AlertTriangle, Info,
   Plus, LayoutGrid, Mic, Image
 } from 'lucide-react';
-import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob, VideoProject, PipelineStage, PIPELINE_STAGES_ORDER } from './types';
+import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob, VideoProject, PipelineStage, PIPELINE_STAGES_ORDER, STAGE_META } from './types';
 import ProfileEditor from './components/ProfileEditor';
 import Terminal from './components/Terminal';
 import Storyboard from './components/Storyboard';
@@ -30,6 +30,7 @@ import { useJobMonitor } from './hooks/useJobMonitor';
 import { JobQueueService } from './services/JobQueueService';
 import { PipelineExecutor, PromptPreviewRequest } from './services/PipelineExecutor';
 import { configureSupabase } from './lib/supabase';
+import { saveAudio } from './services/AudioStorageService';
 import PromptDebugModal, { PromptPreviewData } from './components/PromptDebugModal';
 import ErrorDetailModal from './components/ErrorDetailModal';
 import { StatusModalProvider } from './contexts/StatusModalContext';
@@ -251,6 +252,20 @@ export default function App() {
       setProjects(prev => prev.map(p => p.id === projectId ? { ...p, status: 'ready', errorMessage: undefined, updatedAt: new Date().toISOString() } : p));
     } catch (e) {
       console.error('Failed to reset project stage:', e);
+    }
+  };
+
+  const handleUpdateProject = async (projectId: string, updates: Partial<VideoProject>) => {
+    try {
+      await projectServiceRef.current.updateProject(projectId, updates);
+      setProjects(prev => prev.map(p => p.id === projectId ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p));
+
+      // If we are updating the current details project, sync it
+      if (detailsProject?.id === projectId) {
+        setDetailsProject(prev => prev ? { ...prev, ...updates, updatedAt: new Date().toISOString() } : null);
+      }
+    } catch (e) {
+      console.error('Failed to update project:', e);
     }
   };
 
@@ -590,7 +605,19 @@ export default function App() {
       const project = projects.find(p => p.id === id);
       if (project) {
         try {
-          // Build stage data based on what the next stage expects
+          // Check if stage already has data and ask for overwrite confirmation
+          const stageToCheck = (input instanceof File && (nextStage === PipelineStage.AUDIO || nextStage === PipelineStage.AUDIO_COMPRESS))
+            ? currentStage  // For audio uploads, check the CURRENT stage data being replaced
+            : nextStage;
+          const existingData = project.stageData[stageToCheck as keyof typeof project.stageData];
+          if (existingData) {
+            const stageName = STAGE_META[stageToCheck]?.label || stageToCheck;
+            const confirmOverwrite = window.confirm(
+              `O projeto "${project.title.substring(0, 50)}" já possui dados no estágio "${stageName}".\n\nDeseja sobrescrever com o novo conteúdo?`
+            );
+            if (!confirmOverwrite) continue;
+          }
+
           const stageData: Record<string, unknown> = {};
           if (typeof input === 'string') {
             if (nextStage === PipelineStage.SCRIPT) {
@@ -601,16 +628,65 @@ export default function App() {
               stageData[nextStage] = { content: input, mode: 'manual' };
             }
           } else {
-            // File — store URL (would need upload to Supabase storage in real implementation)
-            const fileUrl = URL.createObjectURL(input);
-            if (nextStage === PipelineStage.AUDIO) {
-              stageData.audio = { fileUrl, mode: 'manual' };
-            } else if (nextStage === PipelineStage.AUDIO_COMPRESS) {
-              stageData.audio_compress = { fileUrl, mode: 'manual' };
-            } else if (nextStage === PipelineStage.VIDEO) {
-              stageData.video = { fileUrl, mode: 'manual' };
-            } else if (nextStage === PipelineStage.THUMBNAIL) {
-              stageData.thumbnail = { imageUrl: fileUrl, mode: 'manual' };
+            // File upload — persist to IndexedDB for audio stages
+            if (nextStage === PipelineStage.AUDIO || nextStage === PipelineStage.AUDIO_COMPRESS) {
+              const arrayBuffer = await input.arrayBuffer();
+              const uint8 = new Uint8Array(arrayBuffer);
+
+              // Calculate audio duration via AudioContext
+              let duration: number | undefined;
+              try {
+                const audioCtx = new AudioContext();
+                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+                duration = audioBuffer.duration;
+                await audioCtx.close();
+              } catch (e) {
+                console.warn('[ManualUpload] Could not decode audio duration:', e);
+              }
+
+              if (nextStage === PipelineStage.AUDIO) {
+                // Uploading directly TO the audio stage
+                await saveAudio(project.id, uint8);
+                stageData.audio = {
+                  fileUrl: `idb://${project.id}`,
+                  duration,
+                  provider: 'manual-upload',
+                  mode: 'manual'
+                };
+                console.log(`[ManualUpload] Audio (WAV) saved: ${project.id} (${(uint8.byteLength / 1024).toFixed(1)} KB, duration: ${duration?.toFixed(1)}s)`);
+              } else {
+                // Advancing from AUDIO → AUDIO_COMPRESS
+                // Save to BOTH keys to ensure players in both stages show the new file
+                await saveAudio(project.id, uint8);
+                await saveAudio(`${project.id}_compressed`, uint8);
+
+                // Update the AUDIO stage data so the player shows the new file
+                stageData.audio = {
+                  fileUrl: `idb://${project.id}`,
+                  duration,
+                  provider: 'manual-upload',
+                  mode: 'manual'
+                };
+                // Also create audio_compress data to advance the stage
+                stageData.audio_compress = {
+                  fileUrl: `idb://${project.id}_compressed`,
+                  duration,
+                  originalSize: uint8.byteLength,
+                  compressedSize: uint8.byteLength,
+                  format: input.name.endsWith('.mp3') ? 'mp3' : input.name.endsWith('.ogg') ? 'ogg' : 'wav',
+                  bitrate: 128,
+                  mode: 'manual'
+                };
+                console.log(`[ManualUpload] Audio replaced in both keys + advance: ${project.id} (${(uint8.byteLength / 1024).toFixed(1)} KB, duration: ${duration?.toFixed(1)}s)`);
+              }
+            } else {
+              // Non-audio file uploads
+              const fileUrl = URL.createObjectURL(input);
+              if (nextStage === PipelineStage.VIDEO) {
+                stageData.video = { fileUrl, mode: 'manual' };
+              } else if (nextStage === PipelineStage.THUMBNAIL) {
+                stageData.thumbnail = { imageUrl: fileUrl, mode: 'manual' };
+              }
             }
           }
 
@@ -1074,6 +1150,8 @@ export default function App() {
           onClose={() => setIsDetailsModalOpen(false)}
           project={detailsProject}
           stage={detailsStage}
+          config={config}
+          onUpdate={handleUpdateProject}
         />
 
         {/* PROMPT DEBUG MODAL */}

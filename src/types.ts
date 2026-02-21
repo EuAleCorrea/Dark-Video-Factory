@@ -200,6 +200,7 @@ export interface ReferenceStageData {
   channelName: string;
   transcript?: string;
   thumbnailUrl?: string;
+  stylePrompt?: string;
   // Metadados extras da APIFY
   description?: string;
   viewCount?: number;
@@ -242,6 +243,10 @@ export interface AudioCompressStageData {
 
 export interface SubtitlesStageData {
   srtContent: string;
+  assContent: string;
+  segments: StoryboardSegment[];
+  segmentCount: number;
+  totalDuration: number;
   wordCount?: number;
   mode: 'auto' | 'manual';
 }

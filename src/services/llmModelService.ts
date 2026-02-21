@@ -10,10 +10,14 @@ export interface LLMModelOption {
 
 // Static models for Gemini and OpenAI
 const STATIC_MODELS: LLMModelOption[] = [
-    // Gemini
-    { id: 'gemini-3-flash-preview', name: 'Gemini 1.5 Flash (Preview)', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
-    { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 1.5 Flash (0520)', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
-    { id: 'gemini-2.5-pro-preview-06-05', name: 'Gemini 1.5 Pro (0605)', provider: 'GEMINI', isFree: false, contextLength: 1000000 },
+    // Google Gemini (2026 SDK)
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', provider: 'GEMINI', isFree: false, contextLength: 4000000 },
+    { id: 'gemini-3-flash', name: 'Gemini 3 Flash (Preview)', provider: 'GEMINI', isFree: true, contextLength: 2000000 },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'GEMINI', isFree: false, contextLength: 2000000 },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'GEMINI', isFree: false, contextLength: 2000000 },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'GEMINI', isFree: true, contextLength: 1000000 },
 
     // OpenAI
     { id: 'gpt-4o', name: 'GPT-4o (Omni)', provider: 'OPENAI', isFree: false, contextLength: 128000 },

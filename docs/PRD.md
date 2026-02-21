@@ -49,7 +49,7 @@ App.tsx (42KB — componente raiz, orquestra tudo)
 ├── BatchActionBar.tsx — Barra de ações em lote (processar, deletar)
 ├── ImageGeneratorPanel.tsx — Interface de geração de imagens via RunWare (Flux.1 Schnell)
 ├── PreviewPlayer.tsx — Player de preview de vídeo
-├── Storyboard.tsx — Visualização de segmentos do storyboard
+├── Storyboard.tsx — Visualização de segmentos do storyboard (Suporta edição de visualPrompt)
 ├── JobQueue.tsx — Fila de jobs (sistema legado)
 ├── Terminal.tsx — Log de terminal
 ├── SystemHealth.tsx — Status do sistema
@@ -91,8 +91,8 @@ O coração do sistema é o **Pipeline Kanban** com 10 estágios sequenciais:
 | 2 | **Roteiro** | `SCRIPT` | Reescrever transcript com IA (2 prompts: P1 Reescrita + P2 Estruturação) | Auto (LLM) |
 | 3 | **Áudio** | `AUDIO` | Gerar narração TTS do roteiro | Auto (Gemini TTS / ElevenLabs) |
 | 4 | **Compactar** | `AUDIO_COMPRESS` | Comprimir áudio WAV → MP3 via FFmpeg | Auto (FFmpeg) |
-| 5 | **Legendas** | `SUBTITLES` | Gerar SRT a partir do áudio | 🔜 Não implementado |
-| 6 | **Imagens** | `IMAGES` | Gerar imagens por segmento via IA | ⚙️ Parcial (UI + RunWare) |
+| 5 | **Legendas** | `SUBTITLES` | Gerar storyboard (segmentos 9-18s) + legendas .ass | Auto (smartChunker + alignmentEngine + subtitleGenerator) |
+| 6 | **Imagens** | `IMAGES` | Agrupar segmentos em cenas inteligentes via LLM + Gerar imagens por cena via IA | Auto (StoryboardPlanner) → Review → 🔜 IA |
 | 7 | **Vídeo** | `VIDEO` | Renderizar vídeo com FFmpeg | 🔜 Não implementado |
 | 8 | **Publicar YT** | `PUBLISH_YT` | Upload para YouTube | 🔜 Não implementado |
 | 9 | **Thumbnail** | `THUMBNAIL` | Gerar thumbnail com IA | 🔜 Não implementado |
@@ -298,6 +298,19 @@ Gerenciamento de múltiplas chaves Gemini com rotação automática.
 | Estados do Modal | `progress` (spinner + "Aguarde..."), `success` (verde), `error` (vermelho) |
 | Layout fixo | Header + Logs (h-300px scroll) + Footer permanecem com tamanho constante |
 | Callback `onLog` | Providers enviam logs para o modal via callback opcional |
+
+### 4.14 StoryboardPlanner (`services/storyboardPlanner.ts`)
+
+Serviço de inteligência visual para consolidação de cenas.
+
+| Função | Descrição |
+|--------|-----------|
+| `planStoryboard(segments, profile, config)` | Agrupa segmentos adjacentes em cenas lógicas via LLM e gera `visualPrompt` único por cena. |
+
+**Lógica de Negócio:**
+- Agrupa segmentos que compartilham o mesmo contexto visual para economizar em geração de imagens e manter coesão.
+- Gera prompts otimizados para modelos de imagem (Flux/Gemini).
+- Permite que o usuário revise e edite os prompts no estágio `review` antes da geração real.
 
 ### 4.12 ReferenceService (`services/ReferenceService.ts`)
 
@@ -632,3 +645,4 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-02-19 | **Auto-Save & Image Library**: Imagens geradas são salvas automaticamente no disco. Galeria carrega últimas 3 imagens salvas no startup. File picker para importar imagens externas com conversão base64 chunked (O(n)) |
 | 2026-02-19 | **Revisão Técnica (12 melhorias)**: (Alta) Persist edits, base64 O(n), remove shell permissions, mask API keys, remove orphaned permission. (Média) Shared `GeneratedImage` type, remove thinking comments, replace `alert()` → `status.error()`. (Baixa) Extract `useImageLibrary` hook, lazy Google Fonts, cache `getBoundingRect()`, remove empty ResizeObserver |
 | 2026-02-19 | **Security Hardening**: Removidas permissões `shell:allow-execute/spawn/stdin-write` e `opener:allow-reveal-item-in-dir` do `default.json`. API keys mascaradas nos logs via `maskGeminiKey()` |
+| 2026-02-20 | **Estágio 5 — Legendas**: Implementado `processSubtitlesStage` no `PipelineExecutor`. Integra `smartChunker` (divide em chunks 9-18s), `alignmentEngine` (alinha c/ duração do áudio) e `subtitleGenerator` (gera .ass estilizado). `SubtitlesStageData` expandido com `segments`, `assContent`, `segmentCount`, `totalDuration`. Visualização no `StageDetailsModal` com tabela de segmentos e preview ASS colapsável |
