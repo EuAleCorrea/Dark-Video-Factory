@@ -1,7 +1,8 @@
 import React from 'react';
-import { VideoProject, PipelineStage, STAGE_META, ReferenceStageData, SubtitlesStageData, AudioStageData, AudioCompressStageData, EngineConfig } from '../types';
-import { X, BookOpen, FileText, Calendar, Hash, Type, Info, ExternalLink, MessageSquare, Code, Play, Clock, AlignLeft, Captions, Mic, Volume2, HardDrive, Zap, Download, Image as ImageIcon, Loader2, Cpu } from 'lucide-react';
+import { VideoProject, PipelineStage, STAGE_META, ReferenceStageData, SubtitlesStageData, AudioStageData, AudioCompressStageData, VideoStageData, EngineConfig } from '../types';
+import { X, BookOpen, FileText, Calendar, Hash, Type, Info, ExternalLink, MessageSquare, Code, Play, Clock, AlignLeft, Captions, Mic, Volume2, HardDrive, Zap, Download, Image as ImageIcon, Loader2, Cpu, Film, FolderOpen } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import VideoPlayerModal from './VideoPlayerModal';
 import { loadAudioBlobUrl, loadAudioRaw } from '../services/AudioStorageService';
 import Storyboard from './Storyboard';
@@ -9,6 +10,9 @@ import { ProjectService } from '../services/ProjectService';
 import { ImagePromptService } from '../services/ImagePromptService';
 import { getImageProvider, getImageModel } from '../services/imageProviders';
 import { interpretErrorWithAI } from '../services/geminiService';
+import { useStatusModal } from '../contexts/StatusModalContext';
+import { saveImageToDisk } from '../services/ImageDiskService';
+import { converterParaSRT, getSrtStats } from '../services/SrtConverterService';
 
 interface StageDetailsModalProps {
     isOpen: boolean;
@@ -28,6 +32,15 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
     const [stylePrompt, setStylePrompt] = React.useState("");
     const [generatingIds, setGeneratingIds] = React.useState<number[]>([]);
     const [imageViewerData, setImageViewerData] = React.useState<{ url: string, text: string } | null>(null);
+    const isGeneratingRef = React.useRef(false);
+    const status = useStatusModal();
+
+    // ═══════════════════════════════════════════════════
+    // 🔒 MODO TESTE — Trava temporária de segurança
+    //    Limita geração a N imagens por ação.
+    //    Remover quando a aplicação estiver estável.
+    // ═══════════════════════════════════════════════════
+    const TEST_MODE_MAX_IMAGES = 2;
 
     React.useEffect(() => {
         if (project?.stageData.reference?.stylePrompt) {
@@ -112,75 +125,128 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
         });
     };
 
+    const handleUpdateSegmentImage = async (id: number, imageUrl: string) => {
+        if (!project) return;
+        const subData = project.stageData.subtitles as SubtitlesStageData;
+        if (!subData) return;
+
+        const updatedSegments = subData.segments.map(seg =>
+            seg.id === id ? { ...seg, assets: { ...seg.assets, imageUrl } } : seg
+        );
+
+        await onUpdate(project.id, {
+            stageData: {
+                ...project.stageData,
+                subtitles: {
+                    ...subData,
+                    segments: updatedSegments
+                }
+            }
+        });
+    };
+
     const handleGenerateImages = async (ids: number[]) => {
-        if (!project || !config) {
-            alert("Erro: Projeto ou Configuração não encontrados.");
+        // ── REGRA 2: Prevenção de loop / double-click ──
+        if (isGeneratingRef.current) {
+            console.warn('[StageDetails] ⛔ Geração já em andamento — ignorando disparo duplicado.');
             return;
         }
 
-        console.log(`[StageDetails] 🎨 Iniciando geração para ${ids.length} cenas...`);
-        console.log(`[StageDetails] 🖌️ Estilo: ${stylePrompt}`);
+        if (!project || !config) {
+            status.open('❌ Erro de Configuração');
+            status.error('Projeto ou Configuração não encontrados.');
+            return;
+        }
 
         const subData = project.stageData.subtitles;
         if (!subData) {
-            alert("Erro: Dados de legenda não encontrados.");
+            status.open('❌ Erro de Dados');
+            status.error('Dados de legenda não encontrados. Processe o estágio de Legendas primeiro.');
             return;
         }
 
-        // Marcar todas as cenas selecionadas como "em processamento/fila"
-        setGeneratingIds(prev => [...new Set([...prev, ...ids])]);
+        // ── REGRA 3: Verificar imagens pré-existentes ──
+        const existingImages = ids.filter(id => {
+            const seg = subData.segments.find(s => s.id === id);
+            return seg?.assets?.imageUrl;
+        });
+
+        if (existingImages.length > 0) {
+            const confirmed = window.confirm(
+                `⚠️ Já existem ${existingImages.length} imagem(ns) gerada(s) anteriormente.\n\nDeseja substituir todas?`
+            );
+            if (!confirmed) {
+                console.log('[StageDetails] 🚫 Usuário cancelou a substituição.');
+                return;
+            }
+        }
+
+        const safeIds = ids;
+
+        // ── Marcar como em execução (anti-loop) ──
+        isGeneratingRef.current = true;
+
+        // ── Abrir StatusModal com logs em tempo real ──
+        status.open('🎨 Gerando Imagens...');
+        status.log(`🎯 ${safeIds.length} segmentos selecionados`);
+        status.log(`🖌️ Estilo: ${stylePrompt.substring(0, 80)}...`);
+
+        // Marcar cenas selecionadas como "em processamento"
+        setGeneratingIds(prev => [...new Set([...prev, ...safeIds])]);
 
         try {
-            // Prioridade: Modelo selecionado em Configurações > Provedor Global > Fallback
-            let imageModelId = config.imageModel;
-            if (!imageModelId) {
-                imageModelId = config.providers.image === 'POLLINATIONS' ? 'FLUX.1-Free' :
-                    config.providers.image === 'FLUX' ? 'FLUX.1' : 'Nano Banana';
-            }
+            const modelIdMap: Record<string, string> = {
+                'FLUX': 'FLUX.1',
+                'NANO_BANANA': 'Nano Banana',
+                'IDEOGRAM': 'Ideogram',
+                'TOGETHER': 'FLUX.1-Together'
+            };
 
+            const imageModelId = modelIdMap[config.providers.image] || 'FLUX.1';
             const model = getImageModel(imageModelId);
             const provider = getImageProvider(imageModelId);
 
             if (!model) throw new Error(`Modelo ${imageModelId} não encontrado.`);
 
-            // Obter a chave correta baseada no apiKeyField do modelo (flux para RunWare, gemini para Direct)
-            // Pollinations (badge FREE) ignora chave
-            const apiKey = (model.badge === 'FREE') ? 'no-key' : ((config.apiKeys as any)[model.apiKeyField] as string);
+            const apiKey = (config.apiKeys as any)[model.apiKeyField] as string;
 
-            if (!apiKey && model.badge !== 'FREE') {
-                alert(`API Key (${model.apiKeyField}) para ${imageModelId} não está configurada.`);
+            if (!apiKey) {
+                status.error(`API Key (${model.apiKeyField}) para ${imageModelId} não está configurada.`, 'Chave de API ausente');
                 setGeneratingIds(prev => prev.filter(gid => !ids.includes(gid)));
+                isGeneratingRef.current = false;
                 return;
             }
+
+            status.log(`🤖 Modelo: ${model.label} [${model.badge}]`);
 
             let lastRawError = "";
             let lastErrorMessage = "";
             const updatedSegments = [...subData.segments];
             let successCount = 0;
 
-            // Função para traduzir erros técnicos para algo amigável (Backup)
             const getFriendlyErrorMessage = (error: any): string => {
                 const msg = error?.message || String(error);
                 if (msg.includes("Insufficient funds") || msg.includes("insufficientCredits")) return "Seu saldo na RunWare acabou ou é insuficiente.";
-                if (msg.includes("Unauthorized") || msg.includes("Invalid API Key") || msg.includes("401")) return "Sua chave de API do RunWare parece estar incorreta ou inválida.";
+                if (msg.includes("Unauthorized") || msg.includes("Invalid API Key") || msg.includes("401")) return "Sua chave de API parece estar incorreta ou inválida.";
                 return msg.replace("Erro RunWare:", "").trim();
             };
 
             // ESTRATÉGIA DE CONSOLIDAÇÃO:
-            // Pegamos os IDs selecionados e os agrupamos pelo seu sceneId
             const sceneGroups: Record<string, number[]> = {};
-            for (const id of ids) {
+            for (const id of safeIds) {
                 const seg = subData.segments.find(s => s.id === id);
                 const sId = seg?.sceneId ? `scene_${seg.sceneId}` : `seg_${id}`;
                 if (!sceneGroups[sId]) sceneGroups[sId] = [];
                 sceneGroups[sId].push(id);
             }
 
-            console.log(`[StageDetails] 📦 Consolidação: ${ids.length} segmentos agrupados em ${Object.keys(sceneGroups).length} cenas únicas.`);
+            const totalScenes = Object.keys(sceneGroups).length;
+            status.log(`📦 Consolidação: ${safeIds.length} segmentos → ${totalScenes} cenas únicas`);
+            status.log('─────────────────────────────');
 
-            // Processamos um grupo por vez (uma imagem por cena)
+            let sceneIndex = 0;
             for (const [sKey, segmentIdsInScene] of Object.entries(sceneGroups)) {
-                // Usamos o primeiro segmento do grupo como referência para o prompt
+                sceneIndex++;
                 const firstId = segmentIdsInScene[0];
                 const segIdx = updatedSegments.findIndex(s => s.id === firstId);
                 if (segIdx === -1) {
@@ -191,13 +257,14 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                 const seg = updatedSegments[segIdx];
 
                 try {
-                    console.log(`[StageDetails] 🔄 CENA ${sKey}: Gerando imagem única para ${segmentIdsInScene.length} segmentos...`);
+                    status.log(`🔄 [${sceneIndex}/${totalScenes}] Cena ${sKey} (${segmentIdsInScene.length} seg.)...`);
 
                     const expandedPrompt = await ImagePromptService.expandPrompt(
                         seg.scriptText,
                         stylePrompt,
                         config
                     );
+                    status.log(`   📝 Prompt expandido (${expandedPrompt.length} chars)`);
 
                     const result = await provider.generate(
                         expandedPrompt,
@@ -208,8 +275,18 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     );
 
                     if (result.urls && result.urls.length > 0) {
-                        const imageUrl = result.urls[0];
-                        // REPLICAÇÃO: Aplicamos a mesma imagem a TODOS os segmentos deste grupo/cena
+                        let imageUrl = result.urls[0];
+
+                        // Salvar imagem em disco para evitar QuotaExceededError no localStorage
+                        try {
+                            const firstSegId = segmentIdsInScene[0];
+                            const localPath = await saveImageToDisk(imageUrl, project.id, firstSegId);
+                            imageUrl = localPath;
+                            status.log(`   💾 Imagem salva em disco`);
+                        } catch (diskErr) {
+                            console.warn('[StageDetails] Falha ao salvar em disco, usando URL direta:', diskErr);
+                            // Continua com a URL original se falhar
+                        }
                         for (const id of segmentIdsInScene) {
                             const idx = updatedSegments.findIndex(s => s.id === id);
                             if (idx !== -1) {
@@ -223,7 +300,21 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                             }
                         }
                         successCount += segmentIdsInScene.length;
-                        console.log(`[StageDetails] ✅ Imagem replicada para ${segmentIdsInScene.length} segmentos da cena ${sKey}`);
+                        status.log(`   ✅ Imagem gerada e replicada para ${segmentIdsInScene.length} segmentos`);
+
+                        // ── SALVAMENTO INCREMENTAL: atualizar o projeto a cada cena ──
+                        // Isso garante que o Storyboard re-renderize com as novas imagens
+                        const partialSubData = { ...subData, segments: [...updatedSegments] };
+                        await onUpdate(project.id, {
+                            stageData: {
+                                ...project.stageData,
+                                subtitles: partialSubData,
+                                reference: {
+                                    ...project.stageData.reference!,
+                                    stylePrompt: stylePrompt
+                                }
+                            }
+                        });
                     } else {
                         throw new Error("API retornou sucesso mas sem URLs de imagem.");
                     }
@@ -231,43 +322,36 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     console.error(`[StageDetails] ❌ Falha na cena ${sKey}:`, err);
                     lastErrorMessage = getFriendlyErrorMessage(err);
                     lastRawError = err.message || String(err);
+                    status.log(`   ❌ Erro: ${lastErrorMessage}`);
                 } finally {
                     setGeneratingIds(prev => prev.filter(gid => !segmentIdsInScene.includes(gid)));
                 }
             }
 
-            // Apenas atualiza se houve algum sucesso
-            if (successCount > 0) {
-                const newSubData = { ...subData, segments: updatedSegments };
-                await onUpdate(project.id, {
-                    stageData: {
-                        ...project.stageData,
-                        subtitles: newSubData,
-                        reference: {
-                            ...project.stageData.reference!,
-                            stylePrompt: stylePrompt
-                        }
-                    }
-                });
-            }
+            status.log('─────────────────────────────');
 
-            if (successCount === ids.length) {
-                alert(`✨ Sucesso! Todas as ${ids.length} imagens foram geradas.`);
-            } else {
-                // Tenta interpretar o erro via IA para um feedback mais humano
+            if (successCount === safeIds.length) {
+                status.log(`🎉 Todas as ${safeIds.length} imagens foram geradas com sucesso!`);
+                status.success('Geração Concluída!');
+            } else if (successCount > 0) {
                 const aiFriendlyMessage = lastRawError
                     ? await interpretErrorWithAI(lastRawError, config)
                     : lastErrorMessage;
-
-                if (successCount > 0) {
-                    alert(`⚠️ Geração parcial: ${successCount} de ${ids.length} imagens criadas.\n\nFeedback: ${aiFriendlyMessage}`);
-                } else {
-                    alert(`❌ Falha na Geração\n\n${aiFriendlyMessage}\n\n(Se o erro persistir, verifique seu saldo e chave de API)`);
-                }
+                status.log(`⚠️ Geração parcial: ${successCount}/${safeIds.length} imagens`);
+                status.log(`💡 ${aiFriendlyMessage}`);
+                status.error(`${successCount} de ${safeIds.length} imagens geradas`, 'Geração Parcial');
+            } else {
+                const aiFriendlyMessage = lastRawError
+                    ? await interpretErrorWithAI(lastRawError, config)
+                    : lastErrorMessage;
+                status.log(`💡 ${aiFriendlyMessage}`);
+                status.error(aiFriendlyMessage, 'Falha na Geração');
             }
         } catch (error: any) {
             console.error("[StageDetails] Erro crítico na orquestração:", error);
-            alert(`⚠️ Erro inesperado: ${error.message || "Falha na comunicação com o serviço"}`);
+            status.error(error.message || 'Falha na comunicação com o serviço', 'Erro Inesperado');
+        } finally {
+            isGeneratingRef.current = false;
         }
     };
 
@@ -390,6 +474,55 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     </div>
                 </section>
 
+                {/* Botão Exportar SRT para CapCut */}
+                {scriptData.text && (
+                    <section className="bg-gradient-to-r from-violet-50 to-purple-50 rounded-2xl p-5 border border-violet-200">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h4 className="font-bold text-violet-800 flex items-center gap-2">
+                                    <Captions size={16} /> Exportar SRT (CapCut)
+                                </h4>
+                                <p className="text-xs text-violet-500 mt-1">
+                                    Gera arquivo .srt para importar no CapCut e usar vozes TTS
+                                </p>
+                            </div>
+                            <button
+                                onClick={async () => {
+                                    try {
+                                        const srtContent = converterParaSRT(scriptData.text);
+                                        const stats = getSrtStats(srtContent);
+                                        const { invoke } = await import('@tauri-apps/api/core');
+                                        const tempDir = await invoke<string>('get_downloads_dir');
+                                        const sep = tempDir.includes('\\') ? '\\' : '/';
+                                        const safeTitle = (project?.title || 'roteiro').replace(/[^a-zA-Z0-9\s-]/g, '').substring(0, 40).trim().replace(/\s+/g, '_');
+                                        const filePath = `${tempDir}${sep}${safeTitle}.srt`;
+                                        const encoder = new TextEncoder();
+                                        const bytes = encoder.encode(srtContent);
+                                        await invoke('write_file', { path: filePath, content: Array.from(bytes) });
+                                        status.open('\u2705 SRT Exportado!');
+                                        status.log(`\ud83d\udcc4 Arquivo: ${filePath}`);
+                                        status.log(`\ud83d\udce6 ${stats.blocos} blocos | Duração estimada: ${stats.duracaoTotal}`);
+                                        status.success('SRT salvo com sucesso!');
+                                        // Abrir pasta
+                                        try {
+                                            const { openUrl } = await import('@tauri-apps/plugin-opener');
+                                            await openUrl(tempDir);
+                                        } catch { /* ok */ }
+                                    } catch (err: any) {
+                                        console.error('[SRT Export]', err);
+                                        status.open('\u274c Erro ao Exportar SRT');
+                                        status.error(err.message || 'Falha ao salvar arquivo');
+                                    }
+                                }}
+                                className="px-5 py-2.5 bg-violet-600 hover:bg-violet-500 text-white rounded-full font-bold text-sm transition flex items-center gap-2 shadow-lg shadow-violet-200"
+                            >
+                                <Download size={14} />
+                                Exportar .srt
+                            </button>
+                        </div>
+                    </section>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <section>
                         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Descrição SEO</h4>
@@ -507,9 +640,11 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                             segments={subData.segments}
                             isEditable={true}
                             onUpdate={handleUpdateSegment}
+                            onUpdateImage={handleUpdateSegmentImage}
                             onGenerate={handleGenerateImages}
                             generatingIds={generatingIds}
                             onImageClick={(url: string, text: string) => setImageViewerData({ url, text })}
+                            config={config!}
                         />
                     </div>
                 </section>
@@ -543,7 +678,7 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <StatCard icon={ImageIcon} label="Cenas Planejadas" value={`${sceneCount}`} color="emerald" />
                     <StatCard icon={Clock} label="Duração" value={`${subData.totalDuration.toFixed(1)}s`} color="blue" />
-                    <StatCard icon={Cpu} label="Modelo IA" value={config?.providers.image === 'FLUX' ? 'FLUX.1 [Pro]' : 'Nano Banana [Fast]'} color="purple" />
+                    <StatCard icon={Cpu} label="Modelo IA" value={(() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} [${m.badge}]` : config?.providers.image || 'N/A'; })()} color="purple" />
                     <StatCard icon={Zap} label="Otimização" value="Ativa" color="orange" />
                 </div>
 
@@ -554,7 +689,7 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     <div>
                         <p className="text-sm font-bold text-blue-900">Configuração de Geração Global</p>
                         <p className="text-xs text-blue-700 leading-relaxed mt-0.5">
-                            O modelo <span className="font-bold underline">{config?.providers.image === 'FLUX' ? 'FLUX.1' : 'Nano Banana'}</span> será utilizado para <b>todas as imagens</b> deste projeto.
+                            O modelo <span className="font-bold underline">{(() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} (${m.badge})` : config?.providers.image; })()}</span> será utilizado para <b>todas as imagens</b> deste projeto.
                             Essa configuração é definida globalmente e não pode ser alterada individualmente por cena para manter a consistência visual.
                         </p>
                     </div>
@@ -586,9 +721,11 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                             segments={subData.segments}
                             isEditable={true}
                             onUpdate={handleUpdateSegment}
+                            onUpdateImage={handleUpdateSegmentImage}
                             onGenerate={handleGenerateImages}
                             generatingIds={generatingIds}
                             onImageClick={(url: string, text: string) => setImageViewerData({ url, text })}
+                            config={config!}
                         />
                     </div>
                 </section>
@@ -648,20 +785,28 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                             <div className="bg-slate-900/50 border border-white/5 rounded-[2rem] p-8 backdrop-blur-sm">
                                 <div className="flex items-center gap-3 mb-6 text-white/30">
                                     <Cpu size={16} />
-                                    <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Motor de Geração</span>
+                                    <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                                        {imageViewerData.url.includes('pexels.com') ? 'Fonte da Imagem' : 'Motor de Geração'}
+                                    </span>
                                 </div>
 
                                 <div className="space-y-4">
                                     <div className="flex flex-col gap-1">
-                                        <span className="text-[10px] text-white/20 uppercase font-black">Modelo Ativo</span>
+                                        <span className="text-[10px] text-white/20 uppercase font-black">
+                                            {imageViewerData.url.includes('pexels.com') ? 'Banco de Imagens' : 'Modelo Ativo'}
+                                        </span>
                                         <span className="text-white font-medium text-lg tracking-tight">
-                                            {config?.providers.image === 'FLUX' ? 'FLUX.1 [Pro]' : 'Nano Banana [Fast]'}
+                                            {imageViewerData.url.includes('pexels.com')
+                                                ? 'Pexels Stock'
+                                                : (() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} [${m.badge}]` : 'N/A'; })()}
                                         </span>
                                     </div>
                                     <div className="w-full h-px bg-white/5" />
                                     <div className="flex items-center justify-between">
                                         <span className="text-xs text-white/30">Engine</span>
-                                        <span className="text-[10px] px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-full font-bold">RunWare AI</span>
+                                        <span className="text-[10px] px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-full font-bold">
+                                            {imageViewerData.url.includes('pexels.com') ? 'Pexels API' : (() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m?.providerGroup || 'RunWare AI'; })()}
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -673,6 +818,79 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                         Clique fora para fechar ou pressione Esc
                     </p>
                 </div>
+            </div>
+        );
+    };
+
+    const renderVideoDetails = (videoData: VideoStageData) => {
+        if (!videoData) return null;
+
+        const fileSizeDisplay = videoData.fileUrl ? 'Salvo no disco' : 'N/A';
+        const fileName = videoData.fileUrl?.split(/[\\/]/).pop() || 'N/A';
+
+        const handleOpenFolder = async () => {
+            if (!videoData.fileUrl) return;
+            try {
+                // Open the folder containing the video
+                const folderPath = videoData.fileUrl.split(/[\\/]/).slice(0, -1).join('\\');
+                await openUrl(folderPath);
+            } catch (err) {
+                console.error('Failed to open folder:', err);
+                alert(`Caminho do vídeo:\n${videoData.fileUrl}`);
+            }
+        };
+
+        return (
+            <div className="p-6 space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <StatCard icon={Film} label="Resolução" value={videoData.resolution || 'N/A'} color="emerald" />
+                    <StatCard icon={Clock} label="Duração" value={videoData.duration ? `${videoData.duration.toFixed(1)}s` : 'N/A'} color="blue" />
+                    <StatCard icon={HardDrive} label="Formato" value="MP4 (H.264)" color="purple" />
+                </div>
+
+                {/* Video Player */}
+                {videoData.fileUrl && (
+                    <section>
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                            <Play size={14} /> Player do Vídeo Final
+                        </h4>
+                        <div className="bg-black rounded-2xl overflow-hidden border border-slate-200 shadow-lg">
+                            <video
+                                controls
+                                className="w-full max-h-[480px]"
+                                src={convertFileSrc(videoData.fileUrl)}
+                                preload="metadata"
+                            >
+                                Seu navegador não suporta o elemento de vídeo.
+                            </video>
+                        </div>
+                    </section>
+                )}
+
+                {/* File Details */}
+                <section>
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                        <Download size={14} /> Detalhes do Arquivo
+                    </h4>
+                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
+                        <DetailRow label="Arquivo" value={fileName} />
+                        <DetailRow label="Caminho" value={videoData.fileUrl || 'N/A'} />
+                        <DetailRow label="Status" value={fileSizeDisplay} />
+                    </div>
+                </section>
+
+                {/* Action Button */}
+                {videoData.fileUrl && (
+                    <div className="flex gap-3">
+                        <button
+                            onClick={handleOpenFolder}
+                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-50 text-emerald-700 font-semibold rounded-2xl border border-emerald-200 hover:bg-emerald-100 transition-all active:scale-[0.98]"
+                        >
+                            <FolderOpen size={18} />
+                            Abrir Pasta do Vídeo
+                        </button>
+                    </div>
+                )}
             </div>
         );
     };
@@ -691,6 +909,8 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                 return renderSubtitlesDetails(project.stageData.subtitles as SubtitlesStageData);
             case PipelineStage.IMAGES:
                 return renderImagesDetails(project.stageData.subtitles as SubtitlesStageData);
+            case PipelineStage.VIDEO:
+                return renderVideoDetails(project.stageData.video as VideoStageData);
             default:
                 return (
                     <div className="p-8 text-center text-slate-500">
@@ -746,7 +966,41 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
                         <div className="flex items-center gap-2 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
                             <Cpu size={14} className="text-purple-400" />
-                            Modelo Ativo: <span className="text-slate-900">{config?.providers.image === 'FLUX' ? 'FLUX.1' : 'Nano Banana'}</span>
+                            {(() => {
+                                if (stage === PipelineStage.IMAGES || stage === PipelineStage.THUMBNAIL) {
+                                    return (
+                                        <>
+                                            Modelo de Imagem: <span className="text-slate-900">{(() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} (${m.badge})` : 'N/A'; })()}</span>
+                                        </>
+                                    );
+                                }
+                                if (stage === PipelineStage.AUDIO || stage === PipelineStage.AUDIO_COMPRESS) {
+                                    return (
+                                        <>
+                                            Modelo de Áudio: <span className="text-slate-900">{config?.providers.tts === 'ELEVENLABS' ? 'ElevenLabs' : 'Gemini Voice'}</span>
+                                        </>
+                                    );
+                                }
+                                if (stage === PipelineStage.SCRIPT || stage === PipelineStage.REFERENCE) {
+                                    return (
+                                        <>
+                                            Modelo de Script: <span className="text-slate-900">{config?.scriptingModel || config?.providers.scripting || 'Gemini'}</span>
+                                        </>
+                                    );
+                                }
+                                if (stage === PipelineStage.VIDEO) {
+                                    return (
+                                        <>
+                                            Motor de Renderização: <span className="text-slate-900">FFmpeg Nativo (H.264 + AAC)</span>
+                                        </>
+                                    );
+                                }
+                                return (
+                                    <>
+                                        Sistema Ativado: <span className="text-slate-900">Pipeline Alpha</span>
+                                    </>
+                                );
+                            })()}
                         </div>
                         <button
                             onClick={onClose}

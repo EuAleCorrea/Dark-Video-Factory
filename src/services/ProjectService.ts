@@ -142,16 +142,58 @@ export class ProjectService {
                     audio: { ...merged.stageData.audio, fileUrl: `idb://${id}` }
                 };
             }
+            // Strip base64 images from segments — they should be saved on disk
+            if (merged.stageData?.subtitles?.segments) {
+                let strippedCount = 0;
+                merged.stageData.subtitles.segments = merged.stageData.subtitles.segments.map((seg: any) => {
+                    const url = seg?.assets?.imageUrl;
+                    if (url && url.startsWith('data:') && url.length > 50000) {
+                        strippedCount++;
+                        return { ...seg, assets: { ...seg.assets, imageUrl: '' } };
+                    }
+                    return seg;
+                });
+                if (strippedCount > 0) {
+                    console.warn(`[ProjectService] Sanitizados ${strippedCount} imagens base64 dos segmentos`);
+                }
+            }
             locals[idx] = merged;
             try {
                 localStorage.setItem(LOCAL_KEY, JSON.stringify(locals));
             } catch (e) {
-                console.error('[ProjectService] localStorage cheio, limpando e tentando novamente:', e);
-                // Fallback: limpar projetos antigos e tentar de novo
+                console.error('[ProjectService] localStorage cheio, sanitizando TODOS os projetos:', e);
+                // Sanitizar agressivamente TODOS os projetos
+                for (const proj of locals) {
+                    // Strip audio data URLs
+                    if (proj.stageData?.audio?.fileUrl?.startsWith('data:')) {
+                        proj.stageData.audio.fileUrl = `idb://${proj.id}`;
+                    }
+                    // Strip ALL image data from segments
+                    if (proj.stageData?.subtitles?.segments) {
+                        for (const seg of proj.stageData.subtitles.segments as any[]) {
+                            if (seg?.assets?.imageUrl && (
+                                seg.assets.imageUrl.startsWith('data:') ||
+                                (seg.assets.imageUrl.startsWith('http') && seg.assets.imageUrl.length > 500)
+                            )) {
+                                seg.assets.imageUrl = '';
+                            }
+                        }
+                    }
+                    // Strip large ASS content
+                    if (proj.stageData?.subtitles?.assContent && proj.stageData.subtitles.assContent.length > 10000) {
+                        proj.stageData.subtitles.assContent = '[regenerar]';
+                    }
+                }
                 try {
-                    localStorage.setItem(LOCAL_KEY, JSON.stringify([merged]));
+                    localStorage.setItem(LOCAL_KEY, JSON.stringify(locals));
+                    console.log('[ProjectService] ✅ localStorage salvo após sanitização agressiva');
                 } catch {
-                    console.error('[ProjectService] localStorage irrecuperável');
+                    console.error('[ProjectService] localStorage irrecuperável — salvando apenas projeto atual');
+                    try {
+                        localStorage.setItem(LOCAL_KEY, JSON.stringify([merged]));
+                    } catch {
+                        console.error('[ProjectService] localStorage irrecuperável total');
+                    }
                 }
             }
         }
@@ -233,17 +275,36 @@ export class ProjectService {
         if (!raw) return [];
         try {
             const all: VideoProject[] = JSON.parse(raw);
-            // Auto-sanitize: strip data URLs de áudio que ficaram no localStorage
+            // Auto-sanitize: strip heavy data that shouldn't be in localStorage
             let dirty = false;
             for (const p of all) {
+                // Sanitize audio data URLs
                 if (p.stageData?.audio?.fileUrl?.startsWith('data:')) {
                     p.stageData.audio.fileUrl = `idb://${p.id}`;
                     dirty = true;
                 }
+                // Sanitize image data in segments (biggest offender!)
+                if (p.stageData?.subtitles?.segments) {
+                    for (const seg of p.stageData.subtitles.segments as any[]) {
+                        const url = seg?.assets?.imageUrl;
+                        if (url && (
+                            url.startsWith('data:') ||           // base64 → always strip
+                            (url.startsWith('http') && url.length > 500)  // very long URLs
+                        )) {
+                            seg.assets.imageUrl = '';
+                            dirty = true;
+                        }
+                    }
+                }
+                // Strip assContent if very large (can be regenerated)
+                if (p.stageData?.subtitles?.assContent && p.stageData.subtitles.assContent.length > 10000) {
+                    p.stageData.subtitles.assContent = '[regenerar]';
+                    dirty = true;
+                }
             }
             if (dirty) {
-                console.warn('[ProjectService] Sanitizado data URLs de áudio do localStorage');
-                try { localStorage.setItem(LOCAL_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+                console.warn('[ProjectService] 🧹 Sanitizado dados pesados do localStorage');
+                try { localStorage.setItem(LOCAL_KEY, JSON.stringify(all)); } catch { /* ignore if still full */ }
             }
             return channelId ? all.filter(p => p.channelId === channelId) : all;
         } catch {

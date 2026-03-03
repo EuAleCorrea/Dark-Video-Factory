@@ -36,6 +36,30 @@
         },
         {
           "path": "$PICTURES/DarkVideoFactory/Generated/**"
+        },
+        {
+          "path": "$VIDEO"
+        },
+        {
+          "path": "$VIDEO/**"
+        },
+        {
+          "path": "$VIDEO/DarkVideoFactory"
+        },
+        {
+          "path": "$VIDEO/DarkVideoFactory/**"
+        },
+        {
+          "path": "$TEMP"
+        },
+        {
+          "path": "$TEMP/**"
+        },
+        {
+          "path": "$DOWNLOAD"
+        },
+        {
+          "path": "$DOWNLOAD/**"
         }
       ]
     }

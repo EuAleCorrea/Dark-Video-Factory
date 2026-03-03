@@ -35,7 +35,8 @@ export interface ImageModel {
     id: string;
     label: string;
     provider: string;
-    apiKeyField: 'flux' | 'gemini' | 'openai' | 'openrouter';
+    apiKeyField: 'flux' | 'gemini' | 'openai' | 'openrouter' | 'together';
+    providerGroup: string;
     badge: string;
     description: string;
 }
@@ -45,45 +46,43 @@ export interface ImageModel {
 // =============================================
 
 export const IMAGE_MODELS: ImageModel[] = [
+    // ─── RunWare ───
     {
         id: 'FLUX.1',
         label: 'FLUX.1 Schnell',
         provider: 'runware',
         apiKeyField: 'flux',
+        providerGroup: 'RunWare',
         badge: 'RunWare',
         description: 'Geração ultrarrápida (4 steps) via RunWare API',
     },
     {
         id: 'Nano Banana',
-        label: 'Nano Banana (RunWare)',
+        label: 'Nano Banana (Gemini 2.5)',
         provider: 'nanoBananaRunware',
         apiKeyField: 'flux',
+        providerGroup: 'RunWare',
         badge: 'RunWare',
         description: 'Google Gemini 2.5 Flash Image via RunWare (google:4@2)',
     },
-    // {
-    //     id: 'Nano Banana Direct',
-    //     label: 'Nano Banana (Gemini API)',
-    //     provider: 'nanoBanana',
-    //     apiKeyField: 'gemini',
-    //     badge: 'Gemini',
-    //     description: 'Geração nativa via Google Gemini — DESABILITADO (quota API esgotada)',
-    // },
     {
         id: 'Ideogram',
         label: 'Ideogram',
         provider: 'ideogramRunware',
         apiKeyField: 'flux',
+        providerGroup: 'RunWare',
         badge: 'RunWare',
         description: 'Ideogram via RunWare — excelente em tipografia e texto em imagens',
     },
+    // ─── Together.ai ───
     {
-        id: 'FLUX.1-Free',
-        label: 'FLUX.1 Schnell (Grátis)',
-        provider: 'pollinations',
-        apiKeyField: 'openai', // Dummy field
-        badge: 'FREE',
-        description: 'Geração ilimitada e gratuita via Pollinations.ai (Flux Schnell)',
+        id: 'FLUX.1-Together',
+        label: 'FLUX.1 Schnell',
+        provider: 'together',
+        apiKeyField: 'together',
+        providerGroup: 'Together.ai',
+        badge: 'Together',
+        description: 'FLUX.1 Schnell via Together.ai — rápido e acessível',
     },
 ];
 
@@ -354,6 +353,92 @@ class NanoBananaProvider implements IImageProvider {
     }
 }
 
+/**
+ * Together.ai Provider — FLUX.1 Schnell
+ * Usa fetch direto na API REST do Together.ai.
+ * Retorna imagens como data:URI (base64).
+ */
+class TogetherProvider implements IImageProvider {
+    async generate(
+        prompt: string,
+        width: number,
+        height: number,
+        count: number,
+        apiKey: string,
+        onLog?: (msg: string) => void
+    ): Promise<ImageGenerationResult> {
+        const cleanKey = apiKey.trim();
+        const maskedKey = cleanKey.length > 8 ? cleanKey.substring(0, 5) + '...' + cleanKey.substring(cleanKey.length - 3) : '***';
+
+        // Together.ai FLUX exige dimensões ≤ 1440 e múltiplos de 32
+        const roundTo32 = (v: number) => Math.round(Math.min(v, 1440) / 32) * 32;
+        const safeWidth = roundTo32(width);
+        const safeHeight = roundTo32(height);
+
+        onLog?.('🚀 Conectando ao Together.ai...');
+        onLog?.(`📡 Modelo: black-forest-labs/FLUX.1-schnell`);
+        onLog?.(`🔑 Chave: ${maskedKey}`);
+        onLog?.(`📐 Dimensões: ${safeWidth}x${safeHeight} (original: ${width}x${height}) | Variações: ${count}`);
+
+        const response = await fetch('https://api.together.xyz/v1/images/generations', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${cleanKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt,
+                model: 'black-forest-labs/FLUX.1-schnell',
+                width: safeWidth,
+                height: safeHeight,
+                n: count,
+                steps: 4,
+                response_format: 'b64_json',
+            }),
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text();
+            const statusCode = response.status;
+
+            onLog?.(`❌ ─── ERRO TOGETHER.AI ───`);
+            onLog?.(`   Status: ${statusCode}`);
+            onLog?.(`   Resposta: ${errorBody.substring(0, 300)}`);
+
+            if (statusCode === 401) {
+                throw new Error('Chave Together.ai inválida (401). Verifique nas Configurações.');
+            }
+            if (statusCode === 429) {
+                throw new Error('Rate limit Together.ai atingido (429). Tente novamente em instantes.');
+            }
+            if (statusCode === 400) {
+                throw new Error(`Requisição inválida (400): ${errorBody.substring(0, 200)}`);
+            }
+            throw new Error(`Together.ai retornou erro ${statusCode}: ${errorBody.substring(0, 200)}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.data || !Array.isArray(data.data)) {
+            onLog?.(`⚠️ Resposta inesperada: ${JSON.stringify(data).substring(0, 300)}`);
+            throw new Error('Together.ai retornou resposta sem campo data[]');
+        }
+
+        const urls = data.data.map((item: any) => {
+            if (item.b64_json) {
+                return `data:image/png;base64,${item.b64_json}`;
+            }
+            if (item.url) {
+                return item.url;
+            }
+            throw new Error('Together.ai retornou item sem b64_json nem url');
+        });
+
+        onLog?.(`✅ ${urls.length} imagem(ns) gerada(s) via Together.ai`);
+        return { urls };
+    }
+}
+
 // =============================================
 // FACTORY
 // =============================================
@@ -363,46 +448,8 @@ const providers: Record<string, IImageProvider> = {
     nanoBanana: new NanoBananaProvider(),
     nanoBananaRunware: new NanoBananaRunwareProvider(),
     ideogramRunware: new IdeogramRunwareProvider(),
+    together: new TogetherProvider(),
 };
-
-/**
- * Pollinations.ai Provider — FLUX.1 (Gratuito e Ilimitado)
- * Gera imagens 100% grátis sem chaves de API.
- */
-class PollinationsProvider implements IImageProvider {
-    async generate(
-        prompt: string,
-        width: number,
-        height: number,
-        count: number,
-        _apiKey: string, // Não utilizado
-        onLog?: (msg: string) => void
-    ): Promise<ImageGenerationResult> {
-        onLog?.('🌈 Conectando ao Pollinations.ai (Flux Free)...');
-
-        // Pollinations gera 1 imagem por request de forma síncrona via URL
-        // Vamos gerar os URLs baseados no prompt encodado
-        const urls: string[] = [];
-
-        for (let i = 0; i < count; i++) {
-            // Adicionamos um seed aleatório para garantir imagens diferentes se o count > 1
-            const seed = Math.floor(Math.random() * 1000000);
-            const encodedPrompt = encodeURIComponent(prompt);
-            const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&model=flux&nologo=true`;
-
-            // O Pollinations é tão simples que o "URL" já é a imagem. 
-            // Mas para validar que o serviço está UP, podemos fazer um fetch head ou simples
-            onLog?.(`✨ Gerando URL da imagem ${i + 1}/${count}...`);
-            urls.push(url);
-        }
-
-        onLog?.(`✅ ${urls.length} link(s) gerado(s) (O carregamento real ocorre na UI)`);
-        return { urls };
-    }
-}
-
-// Registrar o novo provider
-(providers as any).pollinations = new PollinationsProvider();
 
 /**
  * Retorna o provider correto para o modelId especificado.
@@ -427,4 +474,16 @@ export function getImageProvider(modelId: string): IImageProvider {
  */
 export function getImageModel(modelId: string): ImageModel | undefined {
     return IMAGE_MODELS.find(m => m.id === modelId);
+}
+
+/**
+ * Agrupa modelos por providerGroup para exibição na UI com <optgroup>.
+ */
+export function getImageModelsByGroup(): Record<string, ImageModel[]> {
+    return IMAGE_MODELS.reduce((groups, model) => {
+        const group = model.providerGroup;
+        if (!groups[group]) groups[group] = [];
+        groups[group].push(model);
+        return groups;
+    }, {} as Record<string, ImageModel[]>);
 }

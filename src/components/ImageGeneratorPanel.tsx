@@ -18,12 +18,13 @@ import {
     Info,
     Pencil
 } from 'lucide-react';
-import { IMAGE_MODELS, getImageProvider, getImageModel } from '../services/imageProviders';
+import { IMAGE_MODELS, getImageProvider, getImageModel, getImageModelsByGroup } from '../services/imageProviders';
 import { EngineConfig } from '../types';
 import type { GeneratedImage } from '../types/images';
 import { useStatusModal } from '../contexts/StatusModalContext';
 import { ThumbnailEditorModal } from './ThumbnailEditorModal';
 import { useImageLibrary } from '../hooks/useImageLibrary';
+import { PexelsHub } from './PexelsHub';
 
 interface ImageGeneratorPanelProps {
     config: EngineConfig;
@@ -38,6 +39,7 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
     const [lightboxImage, setLightboxImage] = useState<GeneratedImage | null>(null);
     const [editingImage, setEditingImage] = useState<GeneratedImage | null>(null);
     const [selectedModel, setSelectedModel] = useState(IMAGE_MODELS[0].id);
+    const [isPexelsOpen, setIsPexelsOpen] = useState(false);
     const status = useStatusModal();
     const { images, setImages, autoSaveImage, handleOpenFolder, handleDownload, handleRemove, loadSavedImages } = useImageLibrary(status.error);
 
@@ -135,10 +137,9 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
 
     return (
         <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden p-6 gap-6 font-sans">
-            {/* Main Content Area */}
             <div className="flex-1 flex flex-col min-h-0 gap-6">
 
-                {/* Header Card - Estilo ElevenLabs */}
+                {/* Header Card */}
                 <header className="bg-white rounded-[2rem] shadow-sm border border-slate-200 px-8 h-20 flex items-center justify-between shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-emerald-50 rounded-xl">
@@ -151,6 +152,13 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                     </div>
 
                     <div className="flex items-center gap-4">
+                        <button
+                            onClick={() => setIsPexelsOpen(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-full text-xs font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10"
+                        >
+                            <Search size={14} className="text-emerald-400" />
+                            Buscar no Pexels
+                        </button>
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-full border border-slate-100 text-xs font-medium text-slate-600">
                             <span className="text-emerald-500">●</span>
                             Pronto para criar
@@ -170,7 +178,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                         />
                     </div>
 
-                    {/* Integrated Command Bar */}
                     <div className="flex items-center justify-between px-8 py-6 border-t-0">
                         <div className="flex items-center gap-3">
                             <div className="flex items-center bg-slate-100 rounded-xl p-1">
@@ -214,8 +221,12 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                                     onChange={(e) => setSelectedModel(e.target.value)}
                                     className="bg-slate-50 border-none rounded-lg px-2 py-1 text-xs cursor-pointer focus:ring-1 focus:ring-emerald-500 outline-none"
                                 >
-                                    {IMAGE_MODELS.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
+                                    {Object.entries(getImageModelsByGroup()).map(([group, models]) => (
+                                        <optgroup key={group} label={group}>
+                                            {models.map(m => (
+                                                <option key={m.id} value={m.id}>{m.label}</option>
+                                            ))}
+                                        </optgroup>
                                     ))}
                                 </select>
                             </div>
@@ -223,10 +234,7 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
 
                         <div className="flex items-center gap-3">
                             {error && (
-                                <span
-                                    className="text-red-500 text-[10px] font-bold max-w-[250px] truncate cursor-default"
-                                    title={error}
-                                >
+                                <span className="text-red-500 text-[10px] font-bold max-w-[250px] truncate cursor-default" title={error}>
                                     ⚠️ {error}
                                 </span>
                             )}
@@ -251,7 +259,7 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                     </div>
                 </div>
 
-                {/* Gallery Area - Bottom Scrollable */}
+                {/* Gallery Area */}
                 <div className="overflow-y-auto flex-1 custom-scrollbar min-h-0 pb-10">
                     <div className="w-full">
                         <div className="flex items-center justify-between mb-6">
@@ -290,7 +298,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                                             />
                                         </div>
 
-                                        {/* Actions Overlay */}
                                         <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] flex items-center justify-center gap-3">
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); setLightboxImage(image); }}
@@ -340,7 +347,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                     className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 animate-in fade-in duration-200"
                     onClick={() => setLightboxImage(null)}
                 >
-                    {/* Close button */}
                     <button
                         onClick={() => setLightboxImage(null)}
                         className="absolute top-6 right-6 bg-white/10 hover:bg-white/20 text-white p-3 rounded-full transition-colors z-10"
@@ -348,7 +354,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                         <X size={24} />
                     </button>
 
-                    {/* Action buttons */}
                     <div className="absolute bottom-8 flex items-center gap-3 z-10">
                         <button
                             onClick={(e) => { e.stopPropagation(); handleDownload(lightboxImage); }}
@@ -364,7 +369,6 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                         </button>
                     </div>
 
-                    {/* Image */}
                     <img
                         src={lightboxImage.url}
                         alt="Imagem em tamanho completo"
@@ -380,6 +384,29 @@ export const ImageGeneratorPanel: React.FC<ImageGeneratorPanelProps> = ({ config
                     image={editingImage}
                     onClose={() => setEditingImage(null)}
                     onSave={handleSaveEditedImage}
+                />
+            )}
+
+            {/* Pexels Search Modal */}
+            {isPexelsOpen && (
+                <PexelsHub
+                    mode="picker"
+                    config={config}
+                    onClose={() => setIsPexelsOpen(false)}
+                    onSelect={(url: string, type: 'IMAGE' | 'VIDEO', alt?: string) => {
+                        const newId = Math.random().toString(36).substr(2, 9);
+                        const newImg: GeneratedImage = {
+                            id: newId,
+                            url: url,
+                            prompt: alt || 'Importado do Pexels',
+                            aspectRatio: '16:9',
+                            timestamp: Date.now()
+                        };
+                        setImages(prev => [newImg, ...prev]);
+                        autoSaveImage(url, newId);
+                        setIsPexelsOpen(false);
+                        status.success('Mídia importada do Pexels!');
+                    }}
                 />
             )}
         </div>

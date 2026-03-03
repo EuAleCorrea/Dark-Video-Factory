@@ -23,6 +23,7 @@ import StageDetailsModal from './components/StageDetailsModal';
 import { ElevenLabsPanel } from './components/ElevenLabsPanel';
 import { GoogleTTSPanel } from './components/GoogleTTSPanel';
 import { ImageGeneratorPanel } from './components/ImageGeneratorPanel';
+import { PexelsHub } from './components/PexelsHub';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
 import { ProjectService } from './services/ProjectService';
@@ -41,7 +42,7 @@ const INITIAL_CONFIG: EngineConfig = {
   hostVolumePath: './temp',
   ffmpegContainerImage: 'linuxserver/ffmpeg',
   maxConcurrentJobs: 1,
-  providers: { scripting: 'GEMINI', image: 'GEMINI', tts: 'GEMINI' },
+  providers: { scripting: 'GEMINI', image: 'FLUX', tts: 'GEMINI' },
   apiKeys: {
     gemini: '', openai: '', elevenLabs: '', flux: '', openrouter: '', youtube: '', apify: '',
     supabaseUrl: '',
@@ -50,7 +51,7 @@ const INITIAL_CONFIG: EngineConfig = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator' | 'pexels'>('pipeline');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
@@ -824,6 +825,7 @@ export default function App() {
                 { id: 'dashboard', icon: Activity, label: 'Dashboard' },
                 { id: 'profiles', icon: Layers, label: 'Perfis' },
                 { id: 'image-generator', icon: Image, label: 'Gerador de Imagens' },
+                { id: 'pexels', icon: Search, label: 'Pexels Hub' },
                 { id: 'settings', icon: Settings, label: 'Configuração' },
                 { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
                 { id: 'google-tts', icon: Mic, label: 'Google TTS' },
@@ -1024,6 +1026,8 @@ export default function App() {
               />
             ) : activeTab === 'image-generator' ? (
               <ImageGeneratorPanel config={config} />
+            ) : activeTab === 'pexels' ? (
+              <PexelsHub mode="hub" config={config} />
             ) : (
               <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
                 <SettingsPanel config={config} onSave={setConfig} />

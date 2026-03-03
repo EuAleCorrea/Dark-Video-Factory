@@ -12,6 +12,7 @@ import { alignStoryboardToAudio } from "../lib/alignmentEngine";
 import { generateAssContent } from "../lib/subtitleGenerator";
 import { StoryboardSegment } from "../types";
 import { planStoryboard } from "./storyboardPlanner";
+import { renderProjectVideo } from "./VideoRenderService";
 
 export interface PromptPreviewRequest {
     stage: 'P1' | 'P2';
@@ -63,6 +64,8 @@ export class PipelineExecutor {
                     return await this.processSubtitlesStage(project, profile);
                 case PipelineStage.IMAGES:
                     return await this.processImagesStage(project, profile);
+                case PipelineStage.VIDEO:
+                    return await this.processVideoStage(project, profile);
                 default:
                     console.log(`No auto-process defined for stage ${project.currentStage}`);
                     await this.projectService.updateProject(project.id, { status: "ready" });
@@ -529,5 +532,38 @@ SAÍDA (JSON STRICT):
                 subtitles: updatedSubtitleData
             }
         };
+    }
+
+    /**
+     * VÍDEO — Renderização FFmpeg
+     * 1. Valida que todos os assets estão presentes
+     * 2. Chama VideoRenderService para renderizar
+     * 3. Reporta progresso via logs
+     * 4. Salva resultado em VideoStageData e avança para PUBLISH_YT
+     */
+    private async processVideoStage(
+        project: VideoProject,
+        profile: ChannelProfile
+    ): Promise<VideoProject> {
+        console.log(`[Pipeline] ====== VÍDEO — Renderização FFmpeg ======`);
+
+        const result = await renderProjectVideo(
+            project,
+            profile,
+            (progress) => {
+                console.log(`[Pipeline] [${progress.phase}] ${progress.message}`);
+            }
+        );
+
+        const videoData: StageDataMap['video'] = {
+            fileUrl: result.outputPath,
+            resolution: result.resolution,
+            duration: result.duration,
+            mode: 'auto',
+        };
+
+        console.log(`[Pipeline] ✅ Vídeo renderizado: ${result.duration.toFixed(1)}s, ${(result.fileSize / 1024 / 1024).toFixed(1)} MB`);
+        console.log(`[Pipeline]   → Arquivo: ${result.outputPath}`);
+        return await this.projectService.advanceStage(project, { video: videoData });
     }
 }

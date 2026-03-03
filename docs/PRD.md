@@ -1,6 +1,6 @@
 # Dark Video Factory — PRD (Product Requirements Document)
 
-> **Última atualização:** 2026-02-19 14:50
+> **Última atualização:** 2026-03-02 11:20
 > **Consulta obrigatória:** Este documento deve ser lido no início de cada sessão antes de qualquer implementação.
 
 ---
@@ -20,7 +20,7 @@
 | Storage | **localStorage** (projetos/config) + **IndexedDB** (áudio binário) |
 | AI/LLM | Google Gemini, OpenAI, OpenRouter (o1, o3, GPT-4o, etc.) |
 | TTS | Google Gemini TTS, ElevenLabs |
-| Imagens | **RunWare** (Flux.1 Schnell), Google Gemini Imagen |
+| Imagens | **RunWare** (Flux.1 Schnell), Google Gemini Imagen, **Together.ai** (Flux.1 Schnell) |
 | Transcrição | **APIFY** (`starvibe~youtube-video-transcript`) |
 | YouTube API | YouTube Data API v3 (busca de vídeos) |
 | Database | Supabase PostgreSQL (opcional, configuração dinâmica) |
@@ -93,7 +93,7 @@ O coração do sistema é o **Pipeline Kanban** com 10 estágios sequenciais:
 | 4 | **Compactar** | `AUDIO_COMPRESS` | Comprimir áudio WAV → MP3 via FFmpeg | Auto (FFmpeg) |
 | 5 | **Legendas** | `SUBTITLES` | Gerar storyboard (segmentos 9-18s) + legendas .ass | Auto (smartChunker + alignmentEngine + subtitleGenerator) |
 | 6 | **Imagens** | `IMAGES` | Agrupar segmentos em cenas inteligentes via LLM + Gerar imagens por cena via IA | Auto (StoryboardPlanner) → Review → 🔜 IA |
-| 7 | **Vídeo** | `VIDEO` | Renderizar vídeo com FFmpeg | 🔜 Não implementado |
+| 7 | **Vídeo** | `VIDEO` | Renderizar vídeo com FFmpeg nativo | Auto (VideoRenderService + FFmpeg) |
 | 8 | **Publicar YT** | `PUBLISH_YT` | Upload para YouTube | 🔜 Não implementado |
 | 9 | **Thumbnail** | `THUMBNAIL` | Gerar thumbnail com IA | 🔜 Não implementado |
 | 10 | **Publicar Thumb** | `PUBLISH_THUMB` | Definir thumbnail no YouTube | 🔜 Não implementado |
@@ -256,15 +256,17 @@ Strategy Pattern + Registry para geração de imagens com múltiplos providers.
 | Interface/Tipo | Descrição |
 |----------------|-----------|
 | `IImageProvider` | Contrato comum: `generate(prompt, w, h, count, apiKey, onLog?)` |
-| `ImageModel` | Metadata: id, label, provider, apiKeyField, badge, description |
+| `ImageModel` | Metadata: id, label, provider, apiKeyField, **providerGroup**, badge, description |
 | `IMAGE_MODELS[]` | Registry central de modelos disponíveis |
 
 **Providers implementados:**
 
-| Provider | Modelo | API Key Field | Detalhes |
-|----------|--------|---------------|----------|
-| `RunwareProvider` | FLUX.1 Schnell | `flux` | Delega para `runwareService.ts` |
-| `NanoBananaProvider` | Gemini 2.5 Flash Image | `gemini` | Usa `@google/genai`, rotação de chaves via `geminiKeyManager` |
+| Provider | Modelo | API Key Field | providerGroup | Detalhes |
+|----------|--------|---------------|---------------|----------|
+| `RunwareProvider` | FLUX.1 Schnell | `flux` | RunWare | Delega para `runwareService.ts` |
+| `NanoBananaRunwareProvider` | Gemini 2.5 Flash Image | `flux` | RunWare | RunWare proxy para google:4@2 |
+| `IdeogramRunwareProvider` | Ideogram | `flux` | RunWare | RunWare proxy para ideogram:4@1 |
+| `TogetherProvider` | FLUX.1 Schnell | `together` | Together.ai | API REST direta `api.together.xyz`, retorna b64_json |
 
 **Funções auxiliares:**
 
@@ -272,6 +274,7 @@ Strategy Pattern + Registry para geração de imagens com múltiplos providers.
 |--------|-----------|
 | `getImageProvider(modelId)` | Factory — retorna instância do provider correto |
 | `getImageModel(modelId)` | Busca metadata do modelo no registry |
+| `getImageModelsByGroup()` | Agrupa modelos por `providerGroup` para UI com `<optgroup>` |
 
 **Para adicionar novo modelo:** (1) criar classe `implements IImageProvider`, (2) add ao `IMAGE_MODELS[]`, (3) registrar no switch de `getImageProvider()`.
 
@@ -515,7 +518,8 @@ Modal de debug visual de prompts antes do envio para a IA.
 | OpenAI | LLM alternativo (GPT-4o etc.) | `apiKeys.openai` |
 | OpenRouter | LLM alternativo (Claude, Llama etc.) | `apiKeys.openrouter` |
 | ElevenLabs | TTS alternativo | `apiKeys.elevenLabs` |
-| **RunWare** | Geração de imagens (Flux.1 Schnell) | `apiKeys.flux` |
+| **RunWare** | Geração de imagens (Flux.1 Schnell, Nano Banana, Ideogram) | `apiKeys.flux` |
+| **Together.ai** | Geração de imagens (Flux.1 Schnell) | `apiKeys.together` |
 | Supabase | Database + Auth (opcional) | `apiKeys.supabaseUrl` + `apiKeys.supabaseKey` |
 
 ---
@@ -647,6 +651,9 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-02-19 | **Security Hardening**: Removidas permissões `shell:allow-execute/spawn/stdin-write` e `opener:allow-reveal-item-in-dir` do `default.json`. API keys mascaradas nos logs via `maskGeminiKey()` |
 | 2026-02-20 | **Estágio 5 — Legendas**: Implementado `processSubtitlesStage` no `PipelineExecutor`. Integra `smartChunker` (divide em chunks 9-18s), `alignmentEngine` (alinha c/ duração do áudio) e `subtitleGenerator` (gera .ass estilizado). `SubtitlesStageData` expandido com `segments`, `assContent`, `segmentCount`, `totalDuration`. Visualização no `StageDetailsModal` com tabela de segmentos e preview ASS colapsável |
 | 2026-02-21 | **Estágio 6 — Imagens & Storyboard**: Implementado agrupamento de cenas via `storyboardPlanner` (LLM). Geração de imagens agora suporta **multi-select** no Storyboard. Adicionado **Interpretador de Erros via IA** (`interpretErrorWithAI`) usando DeepSeek/OpenRouter para diagnósticos assertivos. Refinamentos de UI: zoom/lightbox no Storyboard, overlay "CRIANDO...", e limpeza nos botões de geração. |
+| 2026-03-01 | **Together.ai Provider**: Adicionado `TogetherProvider` para geração de imagens FLUX.1 Schnell via API REST Together.ai (`api.together.xyz`). Seletor de modelos reorganizado com `<optgroup>` agrupado por provider (RunWare, Together.ai). Adicionado campo `providerGroup` ao `ImageModel`. Nova API key `together` no `EngineConfig`. |
+| 2026-03-01 | **Travas de Segurança (Geração de Imagens)**: Implementadas 3 proteções no `handleGenerateImages` do `StageDetailsModal.tsx`: (1) **Anti double-click** via `isGeneratingRef` com liberação no `finally`, (2) **Confirmação de substituição** com `window.confirm` se já existem imagens geradas, (3) **Modo Teste** (DESATIVADO) — constante `TEST_MODE_MAX_IMAGES` permanece no código como referência, basta descomentar o bloco para reativar o limite. **Evolução futura**: geração paralela em batches de 5 para ganho de performance sem causar rate limit. |
+| 2026-03-02 | **Estágio 7 — Vídeo Final**: Implementado `processVideoStage` no `PipelineExecutor`. Criado `VideoRenderService.ts` — orquestra exportação de assets (MP3 + .ass + imagens por cena) para temp, gera concat file, executa FFmpeg nativo (H.264 CRF20 + AAC 192k), salva MP4 em `Videos/DarkVideoFactory/`. Reescrito `ffmpegGenerator.ts` com funções nativas (`buildConcatFileContent`, `buildRenderArgs`). UI no `StageDetailsModal` com player `<video>` via `convertFileSrc`. Capabilities Tauri expandidas com `$VIDEO` e `$TEMP`. |
 
 ## 14. Inteligência e Otimização
 
@@ -659,4 +666,4 @@ O sistema conta com camadas de IA para diagnóstico e redução de custos:
   
 - **Consolidação de Cenas**: 
     - **Lógica**: Agrupa segmentos de legenda via `sceneId` no storyboard.
-    - **Economia**: Gera apenas uma imagem por cena e a replica, reduzindo drasticamente as chamadas de API (RunWare).
+    - **Economia**: Gera apenas uma imagem por cena e a replica, reduzindo drasticamente as chamadas de API (aplica-se a todos os providers: RunWare, Together.ai, etc.).

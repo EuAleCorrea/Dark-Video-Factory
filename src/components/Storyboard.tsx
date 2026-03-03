@@ -1,33 +1,59 @@
 import React, { useRef, useState } from 'react';
-import { JobStatus, StoryboardSegment } from '../types';
-import { Clock, Image as ImageIcon, MessageSquare, Edit3, Split, Trash2, AlertCircle, RefreshCw, Play, Pause, Zap, CheckSquare, Square } from 'lucide-react';
+import { StoryboardSegment, EngineConfig } from '../types';
+import {
+    Clock,
+    Image as ImageIcon,
+    MessageSquare,
+    Edit3,
+    Split,
+    Trash2,
+    AlertCircle,
+    RefreshCw,
+    Play,
+    Pause,
+    Zap,
+    CheckSquare,
+    Square,
+    Search,
+    Loader2
+} from 'lucide-react';
+import { PexelsHub } from './PexelsHub';
+import { PexelsService } from '../services/PexelsService';
+import { resolveImageSrc } from '../services/ImageDiskService';
 
 interface StoryboardProps {
     segments: StoryboardSegment[];
     isEditable: boolean;
     onUpdate: (id: number, text: string, prompt: string) => void;
+    onUpdateImage?: (id: number, imageUrl: string) => void;
     onSplit?: (id: number) => void;
     onDelete?: (id: number) => void;
     onRegenerate?: (id: number) => void;
     onGenerate?: (ids: number[]) => void;
     generatingIds?: number[];
     onImageClick?: (url: string, text: string) => void;
+    config: EngineConfig;
 }
 
 const Storyboard: React.FC<StoryboardProps> = ({
     segments,
     isEditable,
     onUpdate,
+    onUpdateImage,
     onSplit,
     onDelete,
     onRegenerate,
     onGenerate,
     generatingIds = [],
-    onImageClick
+    onImageClick,
+    config
 }) => {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [pexelsOpenId, setPexelsOpenId] = useState<number | null>(null);
+    const [pexelsInitialQuery, setPexelsInitialQuery] = useState<string>('');
+    const [generatingSearchId, setGeneratingSearchId] = useState<number | null>(null);
 
     // Try to find the master audio URL which is attached to the first segment in our mock orchestrator
     const masterAudioUrl = segments.length > 0 ? segments[0].assets?.audioUrl : undefined;
@@ -215,7 +241,7 @@ const Storyboard: React.FC<StoryboardProps> = ({
                                         <div className="w-full h-full flex items-center justify-center">
                                             {seg.assets?.imageUrl ? (
                                                 <img
-                                                    src={seg.assets.imageUrl}
+                                                    src={resolveImageSrc(seg.assets.imageUrl)}
                                                     alt="Generated Asset"
                                                     className="w-full h-full object-cover"
                                                 />
@@ -227,14 +253,14 @@ const Storyboard: React.FC<StoryboardProps> = ({
                                             )}
                                         </div>
 
-                                        {/* Overlay de Hover (apenas se tiver imagem e não estiver gerando) */}
+                                        {/* Overlay de Hover */}
                                         {seg.assets?.imageUrl && !isGenerating && (
                                             <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-all flex items-center justify-center pointer-events-none">
                                                 <Zap size={20} className="text-white opacity-0 group-hover/img:opacity-100 transition-all transform scale-150" />
                                             </div>
                                         )}
 
-                                        {/* Overlay de Geração (isGenerating) - Prioridade Total */}
+                                        {/* Overlay de Geração */}
                                         {isGenerating && (
                                             <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 z-30">
                                                 <RefreshCw size={24} className="animate-spin text-white" />
@@ -244,14 +270,54 @@ const Storyboard: React.FC<StoryboardProps> = ({
                                     </div>
 
                                     {isEditable && onGenerate && (
-                                        <button
-                                            onClick={() => onGenerate([seg.id])}
-                                            disabled={isGenerating}
-                                            className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all active:scale-95 shadow-lg ${isGenerating ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300' : 'bg-slate-900 text-white hover:bg-primary shadow-slate-900/10'}`}
-                                        >
-                                            <Zap size={10} fill="currentColor" />
-                                            Gerar
-                                        </button>
+                                        <div className="flex flex-col gap-1.5">
+                                            <button
+                                                onClick={() => onGenerate([seg.id])}
+                                                disabled={isGenerating}
+                                                className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all active:scale-95 shadow-lg ${isGenerating ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300' : 'bg-[#0D9488] text-white hover:bg-[#0F766E] shadow-teal-500/10'}`}
+                                            >
+                                                <Zap size={10} fill="currentColor" />
+                                                Gerar
+                                            </button>
+                                            <button
+                                                onClick={async () => {
+                                                    // Se já tem visualPrompt válido (não URL), usa direto
+                                                    const vp = seg.visualPrompt || '';
+                                                    const isUrl = vp.startsWith('http://') || vp.startsWith('https://');
+                                                    if (vp.length > 2 && !isUrl) {
+                                                        setPexelsInitialQuery(vp);
+                                                        setPexelsOpenId(seg.id);
+                                                        return;
+                                                    }
+                                                    // Gera busca inteligente via IA
+                                                    setGeneratingSearchId(seg.id);
+                                                    try {
+                                                        const searchQuery = await PexelsService.generateSearchFromText(seg.scriptText, config);
+                                                        setPexelsInitialQuery(searchQuery);
+                                                        setPexelsOpenId(seg.id);
+                                                    } catch {
+                                                        setPexelsInitialQuery('');
+                                                        setPexelsOpenId(seg.id);
+                                                    } finally {
+                                                        setGeneratingSearchId(null);
+                                                    }
+                                                }}
+                                                disabled={isGenerating || generatingSearchId === seg.id}
+                                                className="w-full flex items-center justify-center gap-1.5 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-tighter hover:bg-slate-800 transition-all shadow-lg active:scale-95"
+                                            >
+                                                {generatingSearchId === seg.id ? (
+                                                    <>
+                                                        <Loader2 size={10} className="animate-spin text-emerald-400" />
+                                                        Analisando...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Search size={10} className="text-emerald-400" />
+                                                        Pexels
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             </div>
@@ -285,6 +351,22 @@ const Storyboard: React.FC<StoryboardProps> = ({
                     );
                 })}
             </div>
+
+            {/* Pexels Search Modal for Storyboard */}
+            {pexelsOpenId !== null && (
+                <PexelsHub
+                    mode="picker"
+                    config={config}
+                    initialQuery={pexelsInitialQuery}
+                    onClose={() => setPexelsOpenId(null)}
+                    onSelect={(url: string, type: 'IMAGE' | 'VIDEO', alt?: string) => {
+                        if (pexelsOpenId !== null && onUpdateImage) {
+                            onUpdateImage(pexelsOpenId, url);
+                        }
+                        setPexelsOpenId(null);
+                    }}
+                />
+            )}
         </div>
     );
 };

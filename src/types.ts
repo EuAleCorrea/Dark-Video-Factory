@@ -157,11 +157,10 @@ export interface EngineConfig {
   maxConcurrentJobs: number;
   providers: {
     scripting: 'GEMINI' | 'OPENAI' | 'OPENROUTER';
-    image: 'GEMINI' | 'FLUX' | 'POLLINATIONS';
+    image: 'FLUX' | 'NANO_BANANA' | 'IDEOGRAM' | 'TOGETHER';
     tts: 'GEMINI' | 'ELEVENLABS';
   };
   scriptingModel?: string;
-  imageModel?: string; // NOVO: Modelo específico de imagem selecionado
   scriptingProvider?: 'GEMINI' | 'OPENAI' | 'OPENROUTER';
   apiKeys: {
     gemini: string;
@@ -173,6 +172,8 @@ export interface EngineConfig {
     flux: string;
     openai: string;
     openrouter: string;
+    pexels?: string;
+    together?: string;
   };
 }
 

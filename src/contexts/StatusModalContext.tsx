@@ -132,12 +132,12 @@ export const StatusModalProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
             {/* MODAL UI — Renderizado uma única vez no topo da árvore */}
             {modal.open && (
-                <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-[30000] bg-black/60 flex items-center justify-center p-4 animate-in fade-in duration-200">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col" style={{ height: '460px' }}>
                         {/* Header */}
                         <div className={`px-6 py-4 flex items-center gap-3 shrink-0 ${modal.type === 'progress' ? 'bg-blue-50 text-blue-700' :
-                                modal.type === 'success' ? 'bg-emerald-50 text-emerald-700' :
-                                    'bg-red-50 text-red-700'
+                            modal.type === 'success' ? 'bg-emerald-50 text-emerald-700' :
+                                'bg-red-50 text-red-700'
                             }`}>
                             {modal.type === 'progress' && <Loader2 size={20} className="animate-spin" />}
                             {modal.type === 'success' && <CheckCircle2 size={20} />}
@@ -177,10 +177,10 @@ export const StatusModalProvider: React.FC<{ children: React.ReactNode }> = ({ c
                                 onClick={close}
                                 disabled={modal.type === 'progress'}
                                 className={`px-6 py-2.5 rounded-full font-bold text-sm text-white transition ${modal.type === 'progress'
-                                        ? 'bg-slate-300 cursor-not-allowed'
-                                        : modal.type === 'success'
-                                            ? 'bg-emerald-600 hover:bg-emerald-500'
-                                            : 'bg-red-600 hover:bg-red-500'
+                                    ? 'bg-slate-300 cursor-not-allowed'
+                                    : modal.type === 'success'
+                                        ? 'bg-emerald-600 hover:bg-emerald-500'
+                                        : 'bg-red-600 hover:bg-red-500'
                                     }`}
                             >
                                 {modal.type === 'progress' ? 'Aguarde...' : 'Fechar'}

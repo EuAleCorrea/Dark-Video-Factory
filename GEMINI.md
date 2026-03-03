@@ -58,3 +58,10 @@ git push DarkVideoFactory Desktop_Video_Factory
 - **Quando consultar:** Sempre, antes de qualquer código novo
 - **Quando atualizar:** Após adicionar novos componentes, serviços, estágios ou regras
 
+## 📂 Caminhos de Referência
+
+| Recurso | Caminho |
+|---------|---------|
+| **CapCut Drafts** | `C:\Users\aless\OneDrive\Área de Trabalho\Canais Dark\Rascunhos\CapCut Drafts` |
+| **Áudios TTS (CapCut)** | `{CapCut Drafts}\{pasta}\textReading\` (arquivos .wav individuais) |
+| **Áudio Composto (CapCut)** | `{CapCut Drafts}\{pasta}\Resources\combination\` (arquivos .aac) |

@@ -194,26 +194,32 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
                                 className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] text-sm font-medium outline-none focus:border-purple-500 transition appearance-none"
                                 value={localConfig.providers.image}
                                 onChange={(e) => {
-                                    const provider = e.target.value as any;
-                                    const modelId = provider === 'POLLINATIONS' ? 'FLUX.1-Free' : (provider === 'FLUX' ? 'FLUX.1' : 'Nano Banana');
                                     setLocalConfig(prev => ({
                                         ...prev,
-                                        imageModel: modelId,
-                                        providers: { ...prev.providers, image: provider }
+                                        providers: { ...prev.providers, image: e.target.value as 'FLUX' | 'NANO_BANANA' | 'IDEOGRAM' | 'TOGETHER' }
                                     }));
                                     setIsSaved(false);
                                 }}
                             >
-                                <option value="GEMINI">Gemini Imagen 3 (Rápido)</option>
-                                <option value="FLUX">Flux.1 Pro (Alta Fidelidade)</option>
-                                <option value="POLLINATIONS">Flux.1 Free (Pollinations.ai)</option>
+                                <optgroup label="RunWare">
+                                    <option value="FLUX">FLUX.1 Schnell</option>
+                                    <option value="NANO_BANANA">Nano Banana (Gemini 2.5)</option>
+                                    <option value="IDEOGRAM">Ideogram</option>
+                                </optgroup>
+                                <optgroup label="Together.ai">
+                                    <option value="TOGETHER">FLUX.1 Schnell</option>
+                                </optgroup>
                             </select>
                             <div className="absolute right-3 top-3.5 pointer-events-none text-[#94A3B8]">▼</div>
                         </div>
                         <p className="text-xs text-[#94A3B8] leading-relaxed">
-                            {localConfig.providers.image === 'POLLINATIONS'
-                                ? "O Pollinations oferece Flux Schnell gratuito e ilimitado sem necessidade de chaves."
-                                : "Flux.1 oferece texturas fotorrealistas superiores, mas requer chave BFL paga."}
+                            {localConfig.providers.image === 'FLUX'
+                                ? "O Flux.1 Schnell via RunWare é ideal para geração ultrarrápida com alta fidelidade."
+                                : localConfig.providers.image === 'NANO_BANANA'
+                                    ? "O Nano Banana é otimizado para velocidade mantendo uma boa qualidade estética."
+                                    : localConfig.providers.image === 'TOGETHER'
+                                        ? "O FLUX.1 Schnell via Together.ai oferece geração rápida e acessível."
+                                        : "O Ideogram é o melhor modelo atual para renderizar textos e tipografia dentro de imagens."}
                         </p>
                     </div>
 
@@ -438,6 +444,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
                         />
                     </div>
 
+                    <div className="col-span-2 md:col-span-1">
+                        <label className="block text-sm font-bold text-orange-500 mb-2 flex items-center gap-2">
+                            Together.ai API Key
+                        </label>
+                        <input
+                            type="password"
+                            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-orange-500 outline-none tracking-widest placeholder:text-[#CBD5E1]"
+                            value={localConfig.apiKeys.together || ''}
+                            onChange={(e) => handleKeyChange('together', e.target.value)}
+                            placeholder="tok-..."
+                        />
+                    </div>
+
                     <div className="col-span-2 md:col-span-1 opacity-50 hover:opacity-100 transition">
                         <label className="block text-sm font-bold text-[#94A3B8] mb-2">ElevenLabs API Key (Opcional)</label>
                         <input
@@ -471,6 +490,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
                             value={localConfig.apiKeys.openai || ''}
                             onChange={(e) => handleKeyChange('openai', e.target.value)}
                             placeholder="sk-..."
+                        />
+                    </div>
+
+                    <div className="col-span-2 md:col-span-1">
+                        <label className="block text-sm font-bold text-slate-600 mb-2 flex items-center gap-2">
+                            Pexels API Key
+                        </label>
+                        <input
+                            type="password"
+                            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-slate-500 outline-none tracking-widest placeholder:text-[#CBD5E1]"
+                            value={localConfig.apiKeys.pexels || ''}
+                            onChange={(e) => handleKeyChange('pexels', e.target.value)}
+                            placeholder="Inserir chave do Pexels..."
                         />
                     </div>
                 </div>

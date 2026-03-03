@@ -48,11 +48,20 @@ async function getTempPath(filename: string): Promise<string> {
     return `${tempBase}${separator}${filename}`;
 }
 
-/** Monta argumentos FFmpeg para compressão WAV → MP3 */
+/** Monta argumentos FFmpeg para compressão WAV → MP3 com filtros de limpeza */
 function buildCompressArgs(inputPath: string, outputPath: string, bitrate: number = 128): string[] {
+    // Filtros aplicados:
+    // 1. afftdn: Redução de ruído FFT (remove chiado de fundo)
+    // 2. highpass=f=100: Remove sons infra-graves indesejados
+    // 3. lowpass=f=15000: Remove frequências ultra-altas inúteis para voz
+    // 4. treble=g=-3:f=8000: Atenua levemente agudos para reduzir sibilância (de-esser)
+    // 5. loudnorm: Normalização dinâmica para volume constante
+    const audioFilters = 'afftdn,highpass=f=100,lowpass=f=15000,treble=g=-3:f=8000,loudnorm';
+
     return [
         '-y',                    // Overwrite output
         '-i', inputPath,         // Input WAV
+        '-af', audioFilters,     // Aplicar filtros de áudio
         '-codec:a', 'libmp3lame', // MP3 encoder
         '-b:a', `${bitrate}k`,  // Bitrate (128kbps default)
         '-ar', '44100',          // Sample rate
