@@ -4,6 +4,7 @@ import { ElevenLabsService } from '../services/ElevenLabsService';
 import { ElevenLabsVoice, ElevenLabsModel, ElevenLabsUser, ElevenLabsSettings } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
+import * as DiskStorage from '../services/DiskStorageService';
 
 interface ElevenLabsPanelProps {
     apiKey: string;
@@ -58,10 +59,17 @@ export const ElevenLabsPanel: React.FC<ElevenLabsPanelProps> = ({ apiKey, onClos
                 setModels(modelsData);
                 setUser(userData);
 
-                // Load favorites from localStorage
-                const savedFavs = localStorage.getItem('elevenlabs_favorites');
+                // Load favorites from disk (fallback to localStorage for migration)
+                let savedFavs: string[] | null = null;
+                try {
+                    savedFavs = await DiskStorage.readJson<string[]>('preferences/elevenlabs_favorites.json');
+                } catch { /* ignore */ }
+                if (!savedFavs) {
+                    const legacyRaw = localStorage.getItem('elevenlabs_favorites');
+                    if (legacyRaw) savedFavs = JSON.parse(legacyRaw);
+                }
                 if (savedFavs) {
-                    setFavorites(new Set(JSON.parse(savedFavs)));
+                    setFavorites(new Set(savedFavs));
                 }
 
                 if (voicesData.length > 0) {
@@ -79,7 +87,7 @@ export const ElevenLabsPanel: React.FC<ElevenLabsPanelProps> = ({ apiKey, onClos
 
     // Save favorites when changed
     useEffect(() => {
-        localStorage.setItem('elevenlabs_favorites', JSON.stringify(Array.from(favorites)));
+        DiskStorage.writeJson('preferences/elevenlabs_favorites.json', Array.from(favorites));
     }, [favorites]);
 
     const toggleFavorite = (e: React.MouseEvent, voiceId: string) => {

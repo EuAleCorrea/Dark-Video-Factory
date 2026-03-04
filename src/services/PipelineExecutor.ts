@@ -352,7 +352,7 @@ SAÍDA (JSON STRICT):
             console.warn('[Pipeline] Não foi possível calcular duração do áudio:', e);
         }
 
-        // Converter PCM para WAV Uint8Array e salvar no IndexedDB (evita QuotaExceeded do localStorage)
+        // Converter PCM para WAV Uint8Array e salvar no disco
         const binaryString = atob(base64Pcm);
         const pcmBytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
@@ -364,10 +364,10 @@ SAÍDA (JSON STRICT):
         const wavArrayBuffer = await blobResponse.arrayBuffer();
         const wavData = new Uint8Array(wavArrayBuffer);
         await saveAudio(project.id, wavData);
-        console.log(`[Pipeline] 💾 Áudio salvo no IndexedDB (${(wavData.length / 1024).toFixed(0)} KB)`);
+        console.log(`[Pipeline] 💾 Áudio salvo no disco (${(wavData.length / 1024).toFixed(0)} KB)`);
 
         const audioData: StageDataMap['audio'] = {
-            fileUrl: `idb://${project.id}`,
+            fileUrl: `disk://${project.id}`,
             duration,
             provider: config.providers.tts || 'GEMINI',
             mode: 'auto',
@@ -379,9 +379,9 @@ SAÍDA (JSON STRICT):
     /**
      * COMPACTAR ÁUDIO — FFmpeg WAV → MP3
      * 1. Valida FFmpeg instalado
-     * 2. Lê WAV do IndexedDB
+     * 2. Lê WAV do disco
      * 3. Comprime via FFmpeg (temp files no disco)
-     * 4. Salva MP3 no IndexedDB
+     * 4. Salva MP3 no disco
      * 5. Avança para estágio SUBTITLES
      * 
      * ⚠️ Usa temp files para evitar problemas com WAV grandes em memória
@@ -396,7 +396,7 @@ SAÍDA (JSON STRICT):
         });
 
         const compressData: StageDataMap['audio_compress'] = {
-            fileUrl: `idb://${result.compressedKey}`,
+            fileUrl: `disk://${result.compressedKey}`,
             originalSize: result.originalSize,
             compressedSize: result.compressedSize,
             compressionRatio: result.compressionRatio,

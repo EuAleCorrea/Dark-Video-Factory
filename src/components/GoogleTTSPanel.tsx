@@ -7,6 +7,7 @@ import { generateSpeech } from '../services/geminiService';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { EngineConfig } from '../types';
+import * as DiskStorage from '../services/DiskStorageService';
 
 /** Encapsula PCM raw em um WAV válido para o browser reproduzir */
 function createWavFromPcm(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitsPerSample: number): ArrayBuffer {
@@ -93,13 +94,23 @@ export const GoogleTTSPanel: React.FC<GoogleTTSPanelProps> = ({ config, onClose 
 
     // Load favorites
     React.useEffect(() => {
-        const saved = localStorage.getItem('google_tts_favorites');
-        if (saved) setFavorites(new Set(JSON.parse(saved)));
+        const loadFavs = async () => {
+            let saved: string[] | null = null;
+            try {
+                saved = await DiskStorage.readJson<string[]>('preferences/google_tts_favorites.json');
+            } catch { /* ignore */ }
+            if (!saved) {
+                const legacyRaw = localStorage.getItem('google_tts_favorites');
+                if (legacyRaw) saved = JSON.parse(legacyRaw);
+            }
+            if (saved) setFavorites(new Set(saved));
+        };
+        loadFavs();
     }, []);
 
     // Save favorites
     React.useEffect(() => {
-        localStorage.setItem('google_tts_favorites', JSON.stringify(Array.from(favorites)));
+        DiskStorage.writeJson('preferences/google_tts_favorites.json', Array.from(favorites));
     }, [favorites]);
 
     const toggleFavorite = (e: React.MouseEvent, voiceId: string) => {

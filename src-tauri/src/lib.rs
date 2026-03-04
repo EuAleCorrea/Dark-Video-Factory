@@ -129,6 +129,99 @@ fn get_downloads_dir() -> String {
     format!("{}{}Downloads", home, sep)
 }
 
+/// Get AppData/Roaming directory for persistent storage
+#[tauri::command]
+fn get_appdata_dir() -> String {
+    if cfg!(windows) {
+        std::env::var("APPDATA").unwrap_or_else(|_| {
+            let home = std::env::var("USERPROFILE").unwrap_or_default();
+            format!("{}\\AppData\\Roaming", home)
+        })
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{}/.config", home)
+    }
+}
+
+/// Get the project directory (where data/ will be stored).
+/// Searches CWD and its parents for the project root (has both src-tauri/ and package.json).
+/// In production, falls back to the executable's directory.
+#[tauri::command]
+fn get_project_dir() -> String {
+    // Search CWD and up to 3 parent levels for project root markers.
+    // When `cargo run` executes, CWD is typically src-tauri/, so we need to go up 1 level.
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = cwd.clone();
+        for _ in 0..4 {
+            let has_src_tauri = dir.join("src-tauri").exists();
+            let has_package_json = dir.join("package.json").exists();
+            if has_src_tauri && has_package_json {
+                return dir.to_string_lossy().to_string();
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+
+    // Fallback for dev: use CARGO_MANIFEST_DIR (set at compile time by cargo).
+    // This points to src-tauri/, so parent is the project root.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let manifest_path = std::path::Path::new(manifest_dir);
+    if let Some(parent) = manifest_path.parent() {
+        if parent.join("package.json").exists() {
+            return parent.to_string_lossy().to_string();
+        }
+    }
+
+    // Fallback: use the executable's directory (production builds)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            return parent.to_string_lossy().to_string();
+        }
+    }
+
+    // Last resort: current directory
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string())
+}
+
+/// List subdirectory names inside a given directory
+#[tauri::command]
+fn list_dir_entries(path: String) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(&path)
+        .map_err(|e| format!("Failed to read dir '{}': {}", path, e))?;
+    let mut names = Vec::new();
+    for entry in entries {
+        if let Ok(e) = entry {
+            if e.path().is_dir() {
+                if let Some(name) = e.file_name().to_str() {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    Ok(names)
+}
+
+/// Delete a directory recursively
+#[tauri::command]
+fn delete_dir_cmd(path: String) -> Result<(), String> {
+    if std::path::Path::new(&path).exists() {
+        std::fs::remove_dir_all(&path)
+            .map_err(|e| format!("Failed to delete dir '{}': {}", path, e))
+    } else {
+        Ok(())
+    }
+}
+
+/// Check if a file or directory exists
+#[tauri::command]
+fn file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
 /// Get basic system info (CPU count, memory)
 #[tauri::command]
 fn get_system_info() -> serde_json::Value {
@@ -155,8 +248,13 @@ pub fn run() {
             write_file,
             read_file,
             delete_file_cmd,
+            delete_dir_cmd,
+            file_exists,
+            list_dir_entries,
             get_temp_dir,
-            get_downloads_dir
+            get_downloads_dir,
+            get_appdata_dir,
+            get_project_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

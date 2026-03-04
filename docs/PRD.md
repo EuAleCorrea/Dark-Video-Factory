@@ -132,21 +132,20 @@ Cada projeto tem um `status` que pode ser:
 
 ### 4.1 ProjectService (`services/ProjectService.ts`)
 
-CRUD de projetos com persistência em localStorage + Supabase (opcional).
+CRUD de projetos com persistência em disco (`$APPDATA/DarkVideoFactory/projects/`) + Supabase (opcional).
 
 | Método | Descrição |
 |--------|-----------|
 | `createProject(channelId, title, stageData?)` | Cria projeto novo |
-| `loadProjects(channelId?)` | Carrega todos os projetos |
+| `loadProjects(channelId?)` | Carrega todos os projetos do disco |
 | `updateProject(id, updates)` | Atualiza campos do projeto |
 | `advanceStage(project, stageData)` | Move para próximo estágio |
-| `deleteProject(id)` | Remove projeto |
-| `saveLocal(project)` | Persiste em localStorage |
-| `loadLocal(channelId?)` | Lê do localStorage (com sanitização) |
+| `deleteProject(id)` | Remove projeto (inclui diretório no disco) |
 
-**Regras de negócio:**
-- Sanitiza data URLs > 100KB do áudio → substitui por `idb://projectId`
-- try/catch para `QuotaExceededError` no localStorage
+**Storage:**
+- Cada projeto em `projects/{id}/project.json` via `DiskStorageService`
+- Áudio bruto em `projects/{id}/audio.wav`, comprimido em `audio_compressed.mp3`
+- Sem limite de tamanho (disco nativo via Tauri)
 
 ### 4.2 PipelineExecutor (`services/PipelineExecutor.ts`)
 

@@ -1,74 +1,51 @@
 /**
- * AudioStorageService — IndexedDB para armazenar áudio binário
- * Resolve o limite de ~5MB do localStorage para dados de áudio.
+ * AudioStorageService — Stores audio binary on disk via DiskStorageService.
+ *
+ * Replaces IndexedDB with native filesystem storage.
+ * Audio files are stored at: projects/{projectId}/audio.wav (or audio_compressed.mp3)
  */
 
-const DB_NAME = 'DarkVideoFactory_Audio';
-const DB_VERSION = 1;
-const STORE_NAME = 'audio_files';
+import * as DiskStorage from './DiskStorageService';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
-function openDB(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-        request.onupgradeneeded = () => {
-            const db = request.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME);
-            }
-        };
-    });
+/**
+ * Resolves a storage key to a relative file path.
+ * - "projectId" → projects/{projectId}/audio.wav
+ * - "projectId_compressed" → projects/{projectId}/audio_compressed.mp3
+ */
+function resolveAudioPath(key: string): string {
+    if (key.endsWith('_compressed')) {
+        const projectId = key.replace('_compressed', '');
+        return DiskStorage.joinPath('projects', projectId, 'audio_compressed.mp3');
+    }
+    return DiskStorage.joinPath('projects', key, 'audio.wav');
 }
 
-/** Salva áudio binário (Uint8Array WAV) no IndexedDB com a chave = projectId */
+/** Saves audio binary (Uint8Array) to disk with key = projectId */
 export async function saveAudio(projectId: string, wavData: Uint8Array): Promise<void> {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).put(wavData, projectId);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-    });
+    const path = resolveAudioPath(projectId);
+    await DiskStorage.writeBinary(path, wavData);
+    console.log(`[AudioStorage] 💾 Saved: ${path} (${(wavData.length / 1024).toFixed(0)} KB)`);
 }
 
-/** Carrega áudio do IndexedDB e retorna como Blob URL reproduzível */
+/** Loads audio from disk and returns as Blob URL for playback */
 export async function loadAudioBlobUrl(projectId: string): Promise<string | null> {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const request = tx.objectStore(STORE_NAME).get(projectId);
-        request.onsuccess = () => {
-            const data = request.result as Uint8Array | undefined;
-            if (!data) return resolve(null);
-            const blob = new Blob([data.buffer as ArrayBuffer], { type: 'audio/wav' });
-            resolve(URL.createObjectURL(blob));
-        };
-        request.onerror = () => reject(request.error);
-    });
+    const path = resolveAudioPath(projectId);
+    const absPath = await DiskStorage.getAbsolutePath(path);
+    const fileExists = await DiskStorage.exists(path);
+    if (!fileExists) return null;
+    // Use convertFileSrc for direct asset:// URL — more efficient than reading bytes
+    return convertFileSrc(absPath);
 }
 
-/** Carrega áudio raw do IndexedDB como Uint8Array (sem converter para Blob) */
+/** Loads raw audio from disk as Uint8Array (for FFmpeg processing) */
 export async function loadAudioRaw(projectId: string): Promise<Uint8Array | null> {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const request = tx.objectStore(STORE_NAME).get(projectId);
-        request.onsuccess = () => {
-            const data = request.result as Uint8Array | undefined;
-            resolve(data ?? null);
-        };
-        request.onerror = () => reject(request.error);
-    });
+    const path = resolveAudioPath(projectId);
+    return DiskStorage.readBinary(path);
 }
 
-/** Remove áudio do IndexedDB */
+/** Deletes audio file from disk */
 export async function deleteAudio(projectId: string): Promise<void> {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).delete(projectId);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-    });
+    const path = resolveAudioPath(projectId);
+    await DiskStorage.deleteFile(path);
 }

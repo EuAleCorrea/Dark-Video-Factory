@@ -4,6 +4,7 @@ import * as fabric from 'fabric';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import type { GeneratedImage } from '../types/images';
+import * as DiskStorage from '../services/DiskStorageService';
 
 interface ThumbnailEditorModalProps {
     image: GeneratedImage;
@@ -143,19 +144,23 @@ export const ThumbnailEditorModal: React.FC<ThumbnailEditorModalProps> = ({ imag
     const [availableTemplates, setAvailableTemplates] = useState<ThumbnailTemplate[]>(TEMPLATES);
 
     useEffect(() => {
-        const saved = localStorage.getItem('thumbnail_templates');
-        if (saved) {
+        const loadTemplates = async () => {
+            let saved: ThumbnailTemplate[] | null = null;
             try {
-                const parsed = JSON.parse(saved);
-                // Merge saved templates with default ones (avoiding duplicates if logic requires)
-                // For now, let's just append user templates to the default list or replace if we want full persistence of defaults too
-                // Better strategy: Keep defaults constant, apppend custom ones.
-                const customTemplates = parsed.filter((t: ThumbnailTemplate) => t.custom);
-                setAvailableTemplates([...TEMPLATES, ...customTemplates]);
-            } catch (e) {
-                console.error("Failed to load templates", e);
+                saved = await DiskStorage.readJson<ThumbnailTemplate[]>('preferences/thumbnail_templates.json');
+            } catch { /* ignore */ }
+            if (!saved) {
+                const legacyRaw = localStorage.getItem('thumbnail_templates');
+                if (legacyRaw) {
+                    try { saved = JSON.parse(legacyRaw); } catch { /* ignore */ }
+                }
             }
-        }
+            if (saved) {
+                const customTemplates = saved.filter((t: ThumbnailTemplate) => t.custom);
+                setAvailableTemplates([...TEMPLATES, ...customTemplates]);
+            }
+        };
+        loadTemplates();
     }, []);
 
     const saveCustomTemplate = () => {
@@ -190,7 +195,7 @@ export const ThumbnailEditorModal: React.FC<ThumbnailEditorModalProps> = ({ imag
 
         const updatedTemplates = [...availableTemplates, newTemplate];
         setAvailableTemplates(updatedTemplates);
-        localStorage.setItem('thumbnail_templates', JSON.stringify(updatedTemplates));
+        DiskStorage.writeJson('preferences/thumbnail_templates.json', updatedTemplates);
     };
 
     const deleteTemplate = (id: string, e: React.MouseEvent) => {
@@ -198,7 +203,7 @@ export const ThumbnailEditorModal: React.FC<ThumbnailEditorModalProps> = ({ imag
         if (confirm("Excluir este modelo?")) {
             const updated = availableTemplates.filter(t => t.id !== id);
             setAvailableTemplates(updated);
-            localStorage.setItem('thumbnail_templates', JSON.stringify(updated));
+            DiskStorage.writeJson('preferences/thumbnail_templates.json', updated);
         }
     };
 

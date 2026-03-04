@@ -1,9 +1,8 @@
 /**
  * ImageDiskService — Salva imagens em disco via Tauri
  * 
- * Resolve o QuotaExceededError do localStorage ao mover imagens
- * para o disco (Pictures/DarkVideoFactory/Generated/) e guardar
- * apenas o path local no stageData dos projetos.
+ * Move imagens para Pictures/DarkVideoFactory/Generated/
+ * e guarda apenas o path local no stageData dos projetos.
  */
 
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
@@ -75,37 +74,6 @@ export async function saveImageToDisk(
     console.log(`[ImageDisk] 💾 Saved: ${filePath} (${(imageBytes.length / 1024).toFixed(0)} KB)`);
 
     return filePath;
-}
-
-/**
- * Sanitizes all image URLs in segments for localStorage storage.
- * Replaces data: URIs (base64) with a placeholder to prevent QuotaExceededError.
- * HTTP URLs are kept as-is (they're small strings).
- * Local file paths are kept as-is.
- * 
- * This should be called before saving to localStorage.
- */
-export function sanitizeSegmentImagesForStorage(
-    segments: any[]
-): any[] {
-    return segments.map(seg => {
-        const imageUrl = seg.assets?.imageUrl;
-        if (!imageUrl) return seg;
-
-        // Base64 images are the main offender (~500KB-2MB each)
-        if (imageUrl.startsWith('data:')) {
-            return {
-                ...seg,
-                assets: {
-                    ...seg.assets,
-                    imageUrl: '[base64-stripped]' // Will need to re-generate or load from disk
-                }
-            };
-        }
-
-        // HTTP URLs and file paths are small — keep them
-        return seg;
-    });
 }
 
 /**

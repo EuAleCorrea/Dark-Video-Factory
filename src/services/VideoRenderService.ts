@@ -3,7 +3,7 @@
  * 
  * Fluxo:
  * 1. Prepara diretório temporário para o projeto
- * 2. Exporta MP3 do IndexedDB → arquivo temporário
+ * 2. Exporta MP3 do disco → arquivo temporário
  * 3. Exporta legendas .ass → arquivo temporário
  * 4. Exporta imagens (download URL ou decode base64) → arquivos temporários
  * 5. Gera concat file para FFmpeg
@@ -183,8 +183,8 @@ export async function renderProjectVideo(
     }
 
     // Audio source: prefer compressed, fallback to raw
-    const audioKey = audioCompressData?.fileUrl?.replace('idb://', '')
-        || audioData?.fileUrl?.replace('idb://', '')
+    const audioKey = audioCompressData?.fileUrl?.replace('disk://', '').replace('idb://', '')
+        || audioData?.fileUrl?.replace('disk://', '').replace('idb://', '')
         || project.id;
     const audioDuration = subtitleData.totalDuration || audioCompressData?.duration || audioData?.duration || 0;
 
@@ -200,13 +200,13 @@ export async function renderProjectVideo(
     log('preparing', `📁 Preparando diretório: ${tempDir}`);
 
     // ==========================================
-    // 2. EXPORT AUDIO (MP3 from IndexedDB → temp file)
+    // 2. EXPORT AUDIO (from disk → temp file)
     // ==========================================
     log('exporting_audio', '📥 Exportando áudio...', 0, 1);
 
     const audioRaw = await loadAudioRaw(audioKey);
     if (!audioRaw || audioRaw.length === 0) {
-        throw new Error(`Áudio não encontrado no IndexedDB para key="${audioKey}". Processe os estágios de Áudio primeiro.`);
+        throw new Error(`Áudio não encontrado no disco para key="${audioKey}". Processe os estágios de Áudio primeiro.`);
     }
 
     const audioExt = audioCompressData ? 'mp3' : 'wav';

@@ -1,7 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { ChannelProfile, VideoJob, EngineConfig, JobStatus, ChannelPrompt } from '../types';
-
-const STORAGE_KEY_PROFILES = 'DARK_FACTORY_PROFILES_V1';
+import * as DiskStorage from './DiskStorageService';
 
 export class PersistenceService {
   private supabase: SupabaseClient | null = null;
@@ -23,7 +22,7 @@ export class PersistenceService {
   // --- PROFILES ---
 
   public async saveProfiles(profiles: ChannelProfile[]): Promise<void> {
-    localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
+    await DiskStorage.writeJson('profiles.json', profiles);
 
     if (this.useCloud && this.supabase) {
       for (const p of profiles) {
@@ -70,8 +69,12 @@ export class PersistenceService {
         }));
       }
     }
-    const local = localStorage.getItem(STORAGE_KEY_PROFILES);
-    return local ? JSON.parse(local) : null;
+    const local = await DiskStorage.readJson<ChannelProfile[]>('profiles.json');
+    if (local && local.length > 0) return local;
+
+    // Fallback: try localStorage for migration
+    const legacyRaw = localStorage.getItem('DARK_FACTORY_PROFILES_V1');
+    return legacyRaw ? JSON.parse(legacyRaw) : null;
   }
 
   // --- PROMPTS ---
@@ -251,8 +254,8 @@ export class PersistenceService {
   );
 
   public async saveEngineConfig(config: EngineConfig): Promise<void> {
-    // 1. SEMPRE salvar no LocalStorage (backup local)
-    localStorage.setItem('DARK_FACTORY_CONFIG_V1_BACKUP', JSON.stringify(config));
+    // 1. SEMPRE salvar no disco (backup local)
+    await DiskStorage.writeJson('config.json', config);
 
     if (this.useCloud && this.supabase) {
       const passphrase = this.getEncryptionPassphrase();
@@ -289,9 +292,16 @@ export class PersistenceService {
   }
 
   public async loadEngineConfig(): Promise<Partial<EngineConfig> | null> {
-    // 1. Carregar local primeiro (veloz e garantido)
-    const localRaw = localStorage.getItem('DARK_FACTORY_CONFIG_V1_BACKUP') || localStorage.getItem('DARK_FACTORY_CONFIG_V1');
-    let config: Partial<EngineConfig> = localRaw ? JSON.parse(localRaw) : {};
+    // 1. Carregar do disco primeiro (veloz e garantido)
+    let config: Partial<EngineConfig> = {};
+    const diskConfig = await DiskStorage.readJson<EngineConfig>('config.json');
+    if (diskConfig) {
+      config = diskConfig;
+    } else {
+      // Fallback: try localStorage for migration
+      const localRaw = localStorage.getItem('DARK_FACTORY_CONFIG_V1_BACKUP') || localStorage.getItem('DARK_FACTORY_CONFIG_V1');
+      if (localRaw) config = JSON.parse(localRaw);
+    }
 
     // 2. Se tiver Cloud, descriptografar os secrets do banco
     if (this.useCloud && this.supabase) {

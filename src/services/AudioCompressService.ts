@@ -2,11 +2,11 @@
  * AudioCompressService — Comprime áudio WAV → MP3 via FFmpeg (Tauri)
  * 
  * Fluxo:
- * 1. Lê WAV do IndexedDB (chunks para evitar OOM em arquivos grandes)
+ * 1. Lê WAV do disco (projects/{id}/audio.wav)
  * 2. Grava em temp file via Tauri write_file
  * 3. FFmpeg comprime WAV → MP3 (128kbps, mono, 44100Hz)
  * 4. Lê MP3 comprimido via Tauri read_file
- * 5. Salva MP3 no IndexedDB
+ * 5. Salva MP3 no disco (projects/{id}/audio_compressed.mp3)
  * 6. Limpa temp files
  */
 
@@ -72,10 +72,9 @@ function buildCompressArgs(inputPath: string, outputPath: string, bitrate: numbe
 
 /**
  * Comprime áudio de um projeto.
- * Lê WAV do IDB, comprime via FFmpeg, salva MP3 no IDB.
+ * Lê WAV do disco, comprime via FFmpeg, salva MP3 no disco.
  * 
  * ⚠️ CUIDADO com WAV grandes: grava em temp file ao invés de manter em memória.
- * O write_file do Tauri aceita Vec<u8>, e o IDB guarda Uint8Array.
  */
 export async function compressProjectAudio(
     projectId: string,
@@ -94,8 +93,8 @@ export async function compressProjectAudio(
     }
     log(`✅ FFmpeg encontrado: ${ffmpegInfo.version}`);
 
-    // 2. Carregar WAV do IndexedDB
-    log('📥 Carregando áudio WAV do IndexedDB...');
+    // 2. Carregar WAV do disco
+    log('📥 Carregando áudio WAV do disco...');
     const wavData = await loadAudioRaw(projectId);
     if (!wavData || wavData.length === 0) {
         throw new Error(`Áudio WAV não encontrado para projeto ${projectId}. Processe o estágio de áudio primeiro.`);
@@ -142,11 +141,11 @@ export async function compressProjectAudio(
         const compressionRatio = Math.round((1 - compressedSize / originalSize) * 100);
         log(`📊 Compressão: ${(originalSize / 1024 / 1024).toFixed(2)} MB → ${(compressedSize / 1024 / 1024).toFixed(2)} MB (${compressionRatio}% redução)`);
 
-        // 6. Salvar MP3 no IndexedDB com key de comprimido
+        // 6. Salvar MP3 no disco com key de comprimido
         const compressedKey = `${projectId}_compressed`;
-        log('💾 Salvando MP3 no IndexedDB...');
+        log('💾 Salvando MP3 no disco...');
         await saveAudio(compressedKey, compressedBytes);
-        log('✅ MP3 salvo no IndexedDB!');
+        log('✅ MP3 salvo no disco!');
 
         return {
             compressedKey,

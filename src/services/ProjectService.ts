@@ -1,8 +1,8 @@
 import { getSupabase, isSupabaseConfigured } from '../lib/supabase';
 import { VideoProject, PipelineStage, ProjectStatus, StageDataMap, PIPELINE_STAGES_ORDER } from '../types';
+import * as DiskStorage from './DiskStorageService';
 
 const TABLE = 'video_projects';
-const LOCAL_KEY = 'DARK_FACTORY_PROJECTS_V1';
 
 export class ProjectService {
 
@@ -43,8 +43,8 @@ export class ProjectService {
             console.warn('[ProjectService]⚠️ Supabase não configurado. Salvando apenas localmente.');
         }
 
-        // Always save locally too
-        this.saveLocal(project);
+        // Save to disk
+        await this.saveToDisk(project);
         return project;
     }
 
@@ -71,10 +71,10 @@ export class ProjectService {
             }
         }
 
-        // 2. Fallback local se vazio
+        // 2. Fallback: carregar do disco
         if (projects.length === 0) {
-            projects = this.loadLocal(channelId);
-            console.log(`[ProjectService] ${projects.length} projetos carregados localmente.`);
+            projects = await this.loadFromDisk(channelId);
+            console.log(`[ProjectService] ${projects.length} projetos carregados do disco.`);
         }
 
         // 3. Sanity Check: Resetar 'processing' órfãos (travados por restart/crash)
@@ -85,7 +85,7 @@ export class ProjectService {
                 hasFixes = true;
                 return {
                     ...p,
-                    status: 'error',
+                    status: 'error' as ProjectStatus,
                     errorMessage: 'Processamento interrompido (app reiniciado ou fechado durante execução). Tente novamente.'
                 };
             }
@@ -94,8 +94,7 @@ export class ProjectService {
 
         // 4. Persistir correções se houve
         if (hasFixes) {
-            this.saveAllLocal(projects);
-            // Atualizar no Supabase em background se possível
+            await this.saveAllToDisk(projects);
             if (isSupabaseConfigured()) {
                 projects.filter(p => p.status === 'error' && p.errorMessage?.includes('interrompido'))
                     .forEach(p => this.updateProject(p.id, {
@@ -129,73 +128,16 @@ export class ProjectService {
             }
         }
 
-        // Update local — sanitize large binary data from stageData before saving
-        const locals = this.loadLocalSync();
-        const idx = locals.findIndex(p => p.id === id);
-        if (idx >= 0) {
-            const merged = { ...locals[idx], ...updates, updatedAt: now };
-            // Strip data URLs maiores que 100KB para evitar QuotaExceededError
-            if (merged.stageData?.audio?.fileUrl?.startsWith('data:')) {
-                console.warn('[ProjectService] Sanitizando data URL grande do áudio → idb:// ref');
-                merged.stageData = {
-                    ...merged.stageData,
-                    audio: { ...merged.stageData.audio, fileUrl: `idb://${id}` }
-                };
-            }
-            // Strip base64 images from segments — they should be saved on disk
-            if (merged.stageData?.subtitles?.segments) {
-                let strippedCount = 0;
-                merged.stageData.subtitles.segments = merged.stageData.subtitles.segments.map((seg: any) => {
-                    const url = seg?.assets?.imageUrl;
-                    if (url && url.startsWith('data:') && url.length > 50000) {
-                        strippedCount++;
-                        return { ...seg, assets: { ...seg.assets, imageUrl: '' } };
-                    }
-                    return seg;
-                });
-                if (strippedCount > 0) {
-                    console.warn(`[ProjectService] Sanitizados ${strippedCount} imagens base64 dos segmentos`);
-                }
-            }
-            locals[idx] = merged;
-            try {
-                localStorage.setItem(LOCAL_KEY, JSON.stringify(locals));
-            } catch (e) {
-                console.error('[ProjectService] localStorage cheio, sanitizando TODOS os projetos:', e);
-                // Sanitizar agressivamente TODOS os projetos
-                for (const proj of locals) {
-                    // Strip audio data URLs
-                    if (proj.stageData?.audio?.fileUrl?.startsWith('data:')) {
-                        proj.stageData.audio.fileUrl = `idb://${proj.id}`;
-                    }
-                    // Strip ALL image data from segments
-                    if (proj.stageData?.subtitles?.segments) {
-                        for (const seg of proj.stageData.subtitles.segments as any[]) {
-                            if (seg?.assets?.imageUrl && (
-                                seg.assets.imageUrl.startsWith('data:') ||
-                                (seg.assets.imageUrl.startsWith('http') && seg.assets.imageUrl.length > 500)
-                            )) {
-                                seg.assets.imageUrl = '';
-                            }
-                        }
-                    }
-                    // Strip large ASS content
-                    if (proj.stageData?.subtitles?.assContent && proj.stageData.subtitles.assContent.length > 10000) {
-                        proj.stageData.subtitles.assContent = '[regenerar]';
-                    }
-                }
-                try {
-                    localStorage.setItem(LOCAL_KEY, JSON.stringify(locals));
-                    console.log('[ProjectService] ✅ localStorage salvo após sanitização agressiva');
-                } catch {
-                    console.error('[ProjectService] localStorage irrecuperável — salvando apenas projeto atual');
-                    try {
-                        localStorage.setItem(LOCAL_KEY, JSON.stringify([merged]));
-                    } catch {
-                        console.error('[ProjectService] localStorage irrecuperável total');
-                    }
-                }
-            }
+        // Update on disk — no sanitization needed (no size limits)
+        const existing = await DiskStorage.readJson<VideoProject>(
+            DiskStorage.joinPath('projects', id, 'project.json')
+        );
+        if (existing) {
+            const merged = { ...existing, ...updates, updatedAt: now };
+            await DiskStorage.writeJson(
+                DiskStorage.joinPath('projects', id, 'project.json'),
+                merged
+            );
         }
     }
 
@@ -239,8 +181,9 @@ export class ProjectService {
             const { error } = await getSupabase().from(TABLE).delete().eq('id', id);
             if (error) console.error('[ProjectService] Delete error:', error);
         }
-        const locals = this.loadLocalSync().filter(p => p.id !== id);
-        localStorage.setItem(LOCAL_KEY, JSON.stringify(locals));
+        // Delete entire project directory from disk
+        await DiskStorage.deleteDir(DiskStorage.joinPath('projects', id));
+        console.log(`[ProjectService] 🗑️ Projeto ${id} removido do disco.`);
     }
 
     // ─── HELPERS ─────────────────────────────────────────────
@@ -258,61 +201,41 @@ export class ProjectService {
         };
     }
 
-    private saveLocal(project: VideoProject): void {
-        const all = this.loadLocalSync();
-        const idx = all.findIndex(p => p.id === project.id);
-        if (idx >= 0) all[idx] = project;
-        else all.unshift(project);
-        localStorage.setItem(LOCAL_KEY, JSON.stringify(all));
+    // ─── DISK STORAGE ────────────────────────────────────────
+
+    /** Save a single project to disk as projects/{id}/project.json */
+    private async saveToDisk(project: VideoProject): Promise<void> {
+        const path = DiskStorage.joinPath('projects', project.id, 'project.json');
+        await DiskStorage.writeJson(path, project);
     }
 
-    private saveAllLocal(projects: VideoProject[]): void {
-        localStorage.setItem(LOCAL_KEY, JSON.stringify(projects));
-    }
-
-    private loadLocal(channelId?: string): VideoProject[] {
-        const raw = localStorage.getItem(LOCAL_KEY);
-        if (!raw) return [];
-        try {
-            const all: VideoProject[] = JSON.parse(raw);
-            // Auto-sanitize: strip heavy data that shouldn't be in localStorage
-            let dirty = false;
-            for (const p of all) {
-                // Sanitize audio data URLs
-                if (p.stageData?.audio?.fileUrl?.startsWith('data:')) {
-                    p.stageData.audio.fileUrl = `idb://${p.id}`;
-                    dirty = true;
-                }
-                // Sanitize image data in segments (biggest offender!)
-                if (p.stageData?.subtitles?.segments) {
-                    for (const seg of p.stageData.subtitles.segments as any[]) {
-                        const url = seg?.assets?.imageUrl;
-                        if (url && (
-                            url.startsWith('data:') ||           // base64 → always strip
-                            (url.startsWith('http') && url.length > 500)  // very long URLs
-                        )) {
-                            seg.assets.imageUrl = '';
-                            dirty = true;
-                        }
-                    }
-                }
-                // Strip assContent if very large (can be regenerated)
-                if (p.stageData?.subtitles?.assContent && p.stageData.subtitles.assContent.length > 10000) {
-                    p.stageData.subtitles.assContent = '[regenerar]';
-                    dirty = true;
-                }
-            }
-            if (dirty) {
-                console.warn('[ProjectService] 🧹 Sanitizado dados pesados do localStorage');
-                try { localStorage.setItem(LOCAL_KEY, JSON.stringify(all)); } catch { /* ignore if still full */ }
-            }
-            return channelId ? all.filter(p => p.channelId === channelId) : all;
-        } catch {
-            return [];
+    /** Save all projects to disk (used for batch fixes) */
+    private async saveAllToDisk(projects: VideoProject[]): Promise<void> {
+        for (const p of projects) {
+            await this.saveToDisk(p);
         }
     }
 
-    private loadLocalSync(): VideoProject[] {
-        return this.loadLocal();
+    /** Load all projects from disk by scanning projects/ subdirectories */
+    private async loadFromDisk(channelId?: string): Promise<VideoProject[]> {
+        const projectDirs = await DiskStorage.listDirs('projects');
+        const projects: VideoProject[] = [];
+
+        for (const dir of projectDirs) {
+            try {
+                const path = DiskStorage.joinPath('projects', dir, 'project.json');
+                const project = await DiskStorage.readJson<VideoProject>(path);
+                if (project) {
+                    projects.push(project);
+                }
+            } catch (e) {
+                console.warn(`[ProjectService] Skipping corrupt project dir: ${dir}`, e);
+            }
+        }
+
+        // Sort by createdAt descending
+        projects.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        return channelId ? projects.filter(p => p.channelId === channelId) : projects;
     }
 }

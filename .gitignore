@@ -49,3 +49,6 @@ coverage/
 
 # Tauri / Rust
 src-tauri/target/
+
+# App data (disk storage — projects, config, audio)
+data/

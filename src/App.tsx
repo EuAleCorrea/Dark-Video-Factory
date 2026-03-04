@@ -35,8 +35,9 @@ import { saveAudio } from './services/AudioStorageService';
 import PromptDebugModal, { PromptPreviewData } from './components/PromptDebugModal';
 import ErrorDetailModal from './components/ErrorDetailModal';
 import { StatusModalProvider } from './contexts/StatusModalContext';
+import { runMigration } from './services/MigrationService';
 
-const STORAGE_KEY_CONFIG = 'DARK_FACTORY_CONFIG_V1';
+
 
 const INITIAL_CONFIG: EngineConfig = {
   hostVolumePath: './temp',
@@ -107,6 +108,9 @@ export default function App() {
 
   useEffect(() => {
     const init = async () => {
+      // 0. Migração localStorage → disco (uma única vez)
+      await runMigration();
+
       // 1. Carregar Configurações (Híbrido: Local + Cloud)
       const savedConfig = await persistenceRef.current.loadEngineConfig();
       if (savedConfig) {
@@ -166,7 +170,7 @@ export default function App() {
       configureSupabase(config.apiKeys.supabaseUrl, config.apiKeys.supabaseKey);
     }
 
-    localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
+    // Config é salvo no disco via DiskStorageService (dentro de saveEngineConfig)
     persistenceRef.current.saveEngineConfig(config);
   }, [config, isConfigLoaded]);
 
@@ -629,7 +633,7 @@ export default function App() {
               stageData[nextStage] = { content: input, mode: 'manual' };
             }
           } else {
-            // File upload — persist to IndexedDB for audio stages
+            // File upload — persist to disk for audio stages
             if (nextStage === PipelineStage.AUDIO || nextStage === PipelineStage.AUDIO_COMPRESS) {
               const arrayBuffer = await input.arrayBuffer();
               const uint8 = new Uint8Array(arrayBuffer);

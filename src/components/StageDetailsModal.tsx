@@ -1,6 +1,6 @@
 import React from 'react';
 import { VideoProject, PipelineStage, STAGE_META, ReferenceStageData, SubtitlesStageData, AudioStageData, AudioCompressStageData, VideoStageData, EngineConfig } from '../types';
-import { X, BookOpen, FileText, Calendar, Hash, Type, Info, ExternalLink, MessageSquare, Code, Play, Clock, AlignLeft, Captions, Mic, Volume2, HardDrive, Zap, Download, Image as ImageIcon, Loader2, Cpu, Film, FolderOpen } from 'lucide-react';
+import { X, BookOpen, FileText, Calendar, Hash, Type, Info, ExternalLink, MessageSquare, Code, Play, Clock, AlignLeft, Captions, Mic, Volume2, HardDrive, Zap, Download, Image as ImageIcon, Loader2, Cpu, Film, FolderOpen, Copy } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import VideoPlayerModal from './VideoPlayerModal';
@@ -277,7 +277,7 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     if (result.urls && result.urls.length > 0) {
                         let imageUrl = result.urls[0];
 
-                        // Salvar imagem em disco para evitar QuotaExceededError no localStorage
+                        // Salvar imagem em disco para persistência segura
                         try {
                             const firstSegId = segmentIdsInScene[0];
                             const localPath = await saveImageToDisk(imageUrl, project.id, firstSegId);
@@ -466,7 +466,23 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                 </div>
 
                 <section>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Roteiro Final (Magnético)</h4>
+                    <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Roteiro Final (Magnético)</h4>
+                        <button
+                            onClick={() => {
+                                if (scriptData.text) {
+                                    navigator.clipboard.writeText(scriptData.text);
+                                    status.open('📋 Roteiro copiado!');
+                                    status.success('Texto copiado para a área de transferência.');
+                                }
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition border border-slate-200 hover:border-emerald-200"
+                            title="Copiar roteiro"
+                        >
+                            <Copy size={12} />
+                            Copiar
+                        </button>
+                    </div>
                     <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 shadow-inner">
                         <div className="text-slate-800 leading-relaxed text-lg whitespace-pre-wrap max-h-[600px] overflow-y-auto pr-4 custom-scrollbar font-serif">
                             {scriptData.text || 'Nenhum roteiro gerado.'}
