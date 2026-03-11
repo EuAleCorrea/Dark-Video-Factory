@@ -8,7 +8,7 @@ interface StageActionModalProps {
     currentStage: PipelineStage;
     projectCount: number;
     onSubmitAuto: () => void;
-    onSubmitManual: (input: string | File) => void;
+    onSubmitManual: (input: string | File[]) => void;
 }
 
 export default function StageActionModal({
@@ -21,7 +21,7 @@ export default function StageActionModal({
 }: StageActionModalProps) {
     const [mode, setMode] = useState<'auto' | 'manual'>('auto');
     const [manualText, setManualText] = useState('');
-    const [manualFile, setManualFile] = useState<File | null>(null);
+    const [manualFiles, setManualFiles] = useState<File[]>([]);
 
     if (!isOpen) return null;
 
@@ -39,18 +39,19 @@ export default function StageActionModal({
         if (mode === 'auto') {
             onSubmitAuto();
         } else {
-            if (stageInputType === 'file' && manualFile) {
-                onSubmitManual(manualFile);
+            if (stageInputType === 'file' && manualFiles.length > 0) {
+                // If the callback needs an array we pass it.
+                onSubmitManual(manualFiles);
             } else if (manualText.trim()) {
                 onSubmitManual(manualText.trim());
             }
         }
         setManualText('');
-        setManualFile(null);
+        setManualFiles([]);
     };
 
     const isSubmitDisabled = mode === 'manual'
-        && (stageInputType === 'file' ? !manualFile : !manualText.trim());
+        && (stageInputType === 'file' ? manualFiles.length === 0 : !manualText.trim());
 
     return (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
@@ -89,8 +90,8 @@ export default function StageActionModal({
                         <button
                             onClick={() => setMode('auto')}
                             className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all ${mode === 'auto'
-                                    ? 'bg-white text-primary shadow-sm'
-                                    : 'text-[#64748B] hover:text-[#0F172A]'
+                                ? 'bg-white text-primary shadow-sm'
+                                : 'text-[#64748B] hover:text-[#0F172A]'
                                 }`}
                         >
                             <Zap className="w-3.5 h-3.5" />
@@ -99,8 +100,8 @@ export default function StageActionModal({
                         <button
                             onClick={() => setMode('manual')}
                             className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all ${mode === 'manual'
-                                    ? 'bg-white text-primary shadow-sm'
-                                    : 'text-[#64748B] hover:text-[#0F172A]'
+                                ? 'bg-white text-primary shadow-sm'
+                                : 'text-[#64748B] hover:text-[#0F172A]'
                                 }`}
                         >
                             <Upload className="w-3.5 h-3.5" />
@@ -131,18 +132,43 @@ export default function StageActionModal({
                             </p>
 
                             {stageInputType === 'file' ? (
-                                <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-[#E2E8F0] rounded-xl cursor-pointer hover:border-primary/50 hover:bg-[#F8FAFC] transition-colors">
-                                    <Upload className="w-6 h-6 text-[#94A3B8] mb-2" />
-                                    <span className="text-xs text-[#64748B]">
-                                        {manualFile ? manualFile.name : 'Clique ou arraste o arquivo'}
-                                    </span>
-                                    <input
-                                        type="file"
-                                        className="hidden"
-                                        accept={getAcceptTypes(nextStage)}
-                                        onChange={e => setManualFile(e.target.files?.[0] || null)}
-                                    />
-                                </label>
+                                <div className="space-y-3">
+                                    <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-[#E2E8F0] rounded-xl cursor-pointer hover:border-primary/50 hover:bg-[#F8FAFC] transition-colors">
+                                        <Upload className="w-6 h-6 text-[#94A3B8] mb-2" />
+                                        <span className="text-xs text-[#64748B]">
+                                            Clique ou arraste o arquivo(s)
+                                        </span>
+                                        <input
+                                            type="file"
+                                            className="hidden"
+                                            multiple={nextStage === PipelineStage.AUDIO || nextStage === PipelineStage.AUDIO_COMPRESS}
+                                            accept={getAcceptTypes(nextStage)}
+                                            onChange={e => {
+                                                const files = Array.from(e.target.files || []);
+                                                // Ordenar por data de modificação (mais antigo primeiro = base para concatenação linear correta)
+                                                files.sort((a, b) => a.lastModified - b.lastModified);
+                                                setManualFiles(files);
+                                            }}
+                                        />
+                                    </label>
+
+                                    {manualFiles.length > 0 && (
+                                        <div className="max-h-32 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
+                                            <p className="text-xs font-semibold text-[#0F172A] mb-1">
+                                                {manualFiles.length} {manualFiles.length === 1 ? 'arquivo selecionado p/ upload' : 'arquivos em ordem de concatenação'}:
+                                            </p>
+                                            <div className="flex flex-col gap-1.5">
+                                                {manualFiles.map((file, idx) => (
+                                                    <div key={idx} className="flex items-center gap-2 p-2 bg-[#F1F5F9] rounded-lg text-xs" title={file.name}>
+                                                        <span className="font-mono text-[10px] text-[#94A3B8] w-4">{idx + 1}.</span>
+                                                        <span className="text-[#0F172A] font-medium truncate flex-1">{file.name}</span>
+                                                        <span className="text-[#64748B] ml-2 shrink-0">{new Date(file.lastModified).toLocaleTimeString()}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             ) : (
                                 <textarea
                                     className="w-full h-32 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl px-3 py-2.5 text-sm text-[#0F172A] placeholder:text-[#94A3B8] resize-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"

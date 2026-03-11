@@ -55,6 +55,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
         setIsSaved(false);
     }
 
+    const handlePathChange = (field: keyof NonNullable<EngineConfig['paths']>, value: string) => {
+        setLocalConfig(prev => ({
+            ...prev,
+            paths: { ...prev.paths, [field]: value }
+        }));
+        setIsSaved(false);
+    };
+
     const handleModelChange = (modelId: string) => {
         const model = availableModels.find(m => m.id === modelId);
         if (!model) return;
@@ -304,6 +312,47 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
                                 </p>
                             </div>
                         )}
+                    </div>
+                </div>
+            </div>
+
+            {/* DIRECTORIES CONFIGURATION */}
+            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm">
+                <h3 className="text-base font-bold text-[#64748B] uppercase tracking-wider mb-6 flex items-center gap-2 pb-4 border-b border-[#E2E8F0]">
+                    <HardDrive size={18} className="text-slate-500" /> Diretórios de Arquivos Locais
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="col-span-2">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                            Pasta de Cache do CapCut (MotionBlurCache)
+                        </label>
+                        <input
+                            type="text"
+                            className="w-full bg-[#f1f5f9] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-slate-500 outline-none"
+                            value={localConfig.paths?.capcutCache || ''}
+                            onChange={(e) => handlePathChange('capcutCache', e.target.value)}
+                            placeholder="C:\Users\...\AppData\Local\CapCut\..."
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                            Local onde o CapCut exporta vídeos temporários ou caches de áudio.
+                        </p>
+                    </div>
+
+                    <div className="col-span-2">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                            Pasta de Materiais Pré-processados
+                        </label>
+                        <input
+                            type="text"
+                            className="w-full bg-[#f1f5f9] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-slate-500 outline-none"
+                            value={localConfig.paths?.preProcessedMaterials || ''}
+                            onChange={(e) => handlePathChange('preProcessedMaterials', e.target.value)}
+                            placeholder="Z:\Pré-processados\..."
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                            Local onde você guarda assets já exportados e preparados.
+                        </p>
                     </div>
                 </div>
             </div>

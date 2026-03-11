@@ -518,12 +518,20 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                                         status.open('\u2705 SRT Exportado!');
                                         status.log(`\ud83d\udcc4 Arquivo: ${filePath}`);
                                         status.log(`\ud83d\udce6 ${stats.blocos} blocos | Duração estimada: ${stats.duracaoTotal}`);
-                                        status.success('SRT salvo com sucesso!');
-                                        // Abrir pasta
-                                        try {
-                                            const { openUrl } = await import('@tauri-apps/plugin-opener');
-                                            await openUrl(tempDir);
-                                        } catch { /* ok */ }
+                                        status.success('SRT salvo com sucesso!', {
+                                            label: "Abrir na Pasta",
+                                            icon: <FolderOpen size={16} />,
+                                            onClick: async () => {
+                                                try {
+                                                    console.log('[SRT Export] Tentando revelar o arquivo:', filePath);
+                                                    const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+                                                    await revealItemInDir(filePath);
+                                                } catch (err: any) {
+                                                    console.error('[SRT Export] Erro ao abrir pasta:', err);
+                                                    alert('Falha ao abrir a pasta: ' + (err?.message || String(err)));
+                                                }
+                                            }
+                                        });
                                     } catch (err: any) {
                                         console.error('[SRT Export]', err);
                                         status.open('\u274c Erro ao Exportar SRT');
@@ -847,9 +855,9 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
         const handleOpenFolder = async () => {
             if (!videoData.fileUrl) return;
             try {
-                // Open the folder containing the video
-                const folderPath = videoData.fileUrl.split(/[\\/]/).slice(0, -1).join('\\');
-                await openUrl(folderPath);
+                // Reveal the video file in the containing folder
+                const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+                await revealItemInDir(videoData.fileUrl);
             } catch (err) {
                 console.error('Failed to open folder:', err);
                 alert(`Caminho do vídeo:\n${videoData.fileUrl}`);

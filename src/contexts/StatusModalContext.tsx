@@ -27,6 +27,7 @@ interface StatusModalState {
     type: StatusType;
     title: string;
     logs: string[];
+    action?: { label: string; icon?: React.ReactNode; onClick: () => void };
 }
 
 interface StatusModalAPI {
@@ -34,10 +35,10 @@ interface StatusModalAPI {
     open: (title: string) => void;
     /** Adiciona uma linha de log ao modal */
     log: (msg: string) => void;
-    /** Marca como sucesso (verde) com título opcional */
-    success: (title?: string) => void;
+    /** Marca como sucesso (verde) com título opcional e possível ação customizada */
+    success: (title?: string, action?: { label: string; icon?: React.ReactNode; onClick: () => void }) => void;
     /** Marca como erro (vermelho) com mensagem de erro */
-    error: (errorMsg: string, title?: string) => void;
+    error: (errorMsg: string, title?: string, action?: { label: string; icon?: React.ReactNode; onClick: () => void }) => void;
     /** Fecha o modal */
     close: () => void;
     /** Estado atual do modal (para leitura externa) */
@@ -49,7 +50,8 @@ const initialState: StatusModalState = {
     type: 'progress',
     title: '',
     logs: [],
-};
+    action: undefined,
+};;
 
 // =============================================
 // CONTEXT
@@ -84,6 +86,7 @@ export const StatusModalProvider: React.FC<{ children: React.ReactNode }> = ({ c
             type: 'progress',
             title,
             logs: [],
+            action: undefined,
         });
     }, []);
 
@@ -95,21 +98,23 @@ export const StatusModalProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }));
     }, []);
 
-    const success = useCallback((title?: string) => {
+    const success = useCallback((title?: string, action?: { label: string; icon?: React.ReactNode; onClick: () => void }) => {
         setModal(prev => ({
             ...prev,
             type: 'success',
             title: title ?? prev.title,
             logs: [...prev.logs, '✅ Concluído com sucesso!'],
+            action,
         }));
     }, []);
 
-    const error = useCallback((errorMsg: string, title?: string) => {
+    const error = useCallback((errorMsg: string, title?: string, action?: { label: string; icon?: React.ReactNode; onClick: () => void }) => {
         setModal(prev => ({
             ...prev,
             type: 'error',
             title: title ?? 'Falha na execução',
             logs: [...prev.logs, `❌ ${errorMsg}`],
+            action,
         }));
     }, []);
 
@@ -172,7 +177,16 @@ export const StatusModalProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         </div>
 
                         {/* Footer — Sempre visível */}
-                        <div className="px-6 py-4 border-t border-slate-100 flex justify-end shrink-0">
+                        <div className="px-6 py-4 border-t border-slate-100 flex justify-end shrink-0 gap-3">
+                            {modal.action && modal.type !== 'progress' && (
+                                <button
+                                    onClick={modal.action.onClick}
+                                    className="px-6 py-2.5 rounded-full font-bold text-sm text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition whitespace-nowrap flex items-center gap-2"
+                                >
+                                    {modal.action.icon}
+                                    {modal.action.label}
+                                </button>
+                            )}
                             <button
                                 onClick={close}
                                 disabled={modal.type === 'progress'}

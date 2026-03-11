@@ -32,6 +32,7 @@ import { JobQueueService } from './services/JobQueueService';
 import { PipelineExecutor, PromptPreviewRequest } from './services/PipelineExecutor';
 import { configureSupabase } from './lib/supabase';
 import { saveAudio } from './services/AudioStorageService';
+import { concatenateAudioFiles } from './lib/audioUtils';
 import PromptDebugModal, { PromptPreviewData } from './components/PromptDebugModal';
 import ErrorDetailModal from './components/ErrorDetailModal';
 import { StatusModalProvider } from './contexts/StatusModalContext';
@@ -48,6 +49,10 @@ const INITIAL_CONFIG: EngineConfig = {
     gemini: '', openai: '', elevenLabs: '', flux: '', openrouter: '', youtube: '', apify: '',
     supabaseUrl: '',
     supabaseKey: ''
+  },
+  paths: {
+    capcutCache: 'C:\\Users\\aless\\AppData\\Local\\CapCut\\User Data\\Cache\\MotionBlurCache',
+    preProcessedMaterials: 'Z:\\Pré-processados\\CapCut Materials'
   }
 };
 
@@ -596,7 +601,7 @@ export default function App() {
     setSelectedProjectIds(new Set());
   };
 
-  const handleBatchManualAdvance = async (input: string | File) => {
+  const handleBatchManualAdvance = async (input: string | File | File[]) => {
     setIsStageModalOpen(false);
     const ids = Array.from(selectedProjectIds);
     const currentStage = getSelectedProjectsStage();
@@ -633,16 +638,20 @@ export default function App() {
               stageData[nextStage] = { content: input, mode: 'manual' };
             }
           } else {
+            // Verifica se é Array e normaliza para arquivo único ou processa concatenamento.
+            const isArray = Array.isArray(input);
+            const isAudioStage = nextStage === PipelineStage.AUDIO || nextStage === PipelineStage.AUDIO_COMPRESS;
+
             // File upload — persist to disk for audio stages
-            if (nextStage === PipelineStage.AUDIO || nextStage === PipelineStage.AUDIO_COMPRESS) {
-              const arrayBuffer = await input.arrayBuffer();
-              const uint8 = new Uint8Array(arrayBuffer);
+            if (isAudioStage) {
+              const files = isArray ? input : [input];
+              const { uint8, duration: concatenatedDuration, format } = await concatenateAudioFiles(files);
 
               // Calculate audio duration via AudioContext
-              let duration: number | undefined;
+              let duration = concatenatedDuration;
               try {
                 const audioCtx = new AudioContext();
-                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+                const audioBuffer = await audioCtx.decodeAudioData(uint8.buffer.slice(0));
                 duration = audioBuffer.duration;
                 await audioCtx.close();
               } catch (e) {
@@ -678,7 +687,7 @@ export default function App() {
                   duration,
                   originalSize: uint8.byteLength,
                   compressedSize: uint8.byteLength,
-                  format: input.name.endsWith('.mp3') ? 'mp3' : input.name.endsWith('.ogg') ? 'ogg' : 'wav',
+                  format: format,
                   bitrate: 128,
                   mode: 'manual'
                 };
@@ -686,7 +695,8 @@ export default function App() {
               }
             } else {
               // Non-audio file uploads
-              const fileUrl = URL.createObjectURL(input);
+              const singleFile = Array.isArray(input) ? input[0] : input;
+              const fileUrl = URL.createObjectURL(singleFile);
               if (nextStage === PipelineStage.VIDEO) {
                 stageData.video = { fileUrl, mode: 'manual' };
               } else if (nextStage === PipelineStage.THUMBNAIL) {

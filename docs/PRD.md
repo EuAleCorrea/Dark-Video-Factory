@@ -1,6 +1,6 @@
 # Dark Video Factory — PRD (Product Requirements Document)
 
-> **Última atualização:** 2026-03-02 11:20
+> **Última atualização:** 2026-03-04 18:25
 > **Consulta obrigatória:** Este documento deve ser lido no início de cada sessão antes de qualquer implementação.
 
 ---
@@ -132,7 +132,7 @@ Cada projeto tem um `status` que pode ser:
 
 ### 4.1 ProjectService (`services/ProjectService.ts`)
 
-CRUD de projetos com persistência em disco (`$APPDATA/DarkVideoFactory/projects/`) + Supabase (opcional).
+CRUD de projetos com persistência em disco (`PROJECT_DIR/data/projects/`) + Supabase (opcional).
 
 | Método | Descrição |
 |--------|-----------|
@@ -143,7 +143,7 @@ CRUD de projetos com persistência em disco (`$APPDATA/DarkVideoFactory/projects
 | `deleteProject(id)` | Remove projeto (inclui diretório no disco) |
 
 **Storage:**
-- Cada projeto em `projects/{id}/project.json` via `DiskStorageService`
+- Cada projeto em `projects/{id}/project.json` via `DiskStorageService` em disco (`PROJECT_DIR/data/projects`)
 - Áudio bruto em `projects/{id}/audio.wav`, comprimido em `audio_compressed.mp3`
 - Sem limite de tamanho (disco nativo via Tauri)
 
@@ -653,6 +653,7 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-03-01 | **Together.ai Provider**: Adicionado `TogetherProvider` para geração de imagens FLUX.1 Schnell via API REST Together.ai (`api.together.xyz`). Seletor de modelos reorganizado com `<optgroup>` agrupado por provider (RunWare, Together.ai). Adicionado campo `providerGroup` ao `ImageModel`. Nova API key `together` no `EngineConfig`. |
 | 2026-03-01 | **Travas de Segurança (Geração de Imagens)**: Implementadas 3 proteções no `handleGenerateImages` do `StageDetailsModal.tsx`: (1) **Anti double-click** via `isGeneratingRef` com liberação no `finally`, (2) **Confirmação de substituição** com `window.confirm` se já existem imagens geradas, (3) **Modo Teste** (DESATIVADO) — constante `TEST_MODE_MAX_IMAGES` permanece no código como referência, basta descomentar o bloco para reativar o limite. **Evolução futura**: geração paralela em batches de 5 para ganho de performance sem causar rate limit. |
 | 2026-03-02 | **Estágio 7 — Vídeo Final**: Implementado `processVideoStage` no `PipelineExecutor`. Criado `VideoRenderService.ts` — orquestra exportação de assets (MP3 + .ass + imagens por cena) para temp, gera concat file, executa FFmpeg nativo (H.264 CRF20 + AAC 192k), salva MP4 em `Videos/DarkVideoFactory/`. Reescrito `ffmpegGenerator.ts` com funções nativas (`buildConcatFileContent`, `buildRenderArgs`). UI no `StageDetailsModal` com player `<video>` via `convertFileSrc`. Capabilities Tauri expandidas com `$VIDEO` e `$TEMP`. |
+| 2026-03-04 | **Storage Local em Disco**: Refatoração de armazenamento abandonando `localStorage/IndexedDB` devido a limites de quota. Criados `DiskStorageService` e `MigrationService` para persistir dados (projetos, configs, perfis, audio PCM) nativamente na pasta `PROJECT_DIR/data/` do projeto associado ao drive Z:. Integração robusta e assíncrona com comandos nativos do Tauri fs. |
 
 ## 14. Inteligência e Otimização
 

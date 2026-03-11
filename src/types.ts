@@ -175,6 +175,10 @@ export interface EngineConfig {
     pexels?: string;
     together?: string;
   };
+  paths?: {
+    capcutCache?: string;
+    preProcessedMaterials?: string;
+  };
 }
 
 // =============================================
