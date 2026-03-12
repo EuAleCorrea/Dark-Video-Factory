@@ -1,6 +1,6 @@
 # Dark Video Factory — PRD (Product Requirements Document)
 
-> **Última atualização:** 2026-03-04 18:25
+> **Última atualização:** 2026-03-12 20:15
 > **Consulta obrigatória:** Este documento deve ser lido no início de cada sessão antes de qualquer implementação.
 
 ---
@@ -16,8 +16,8 @@
 | Runtime Desktop | **Tauri v2** (Rust backend) |
 | Frontend | **React 18 + Vite** |
 | Styling | **Tailwind CSS v4** |
-| State | React state local (`useState`, `useRef`) |
-| Storage | **localStorage** (projetos/config) + **IndexedDB** (áudio binário) |
+| State | React Context (`ThemeContext`) + state local (`useState`) |
+| Storage | **Local Disk (JSON-on-Disk)** (Projetos/Config/Assets) + Supabase Sync |
 | AI/LLM | Google Gemini, OpenAI, OpenRouter (o1, o3, GPT-4o, etc.) |
 | TTS | Google Gemini TTS, ElevenLabs |
 | Imagens | **RunWare** (Flux.1 Schnell), Google Gemini Imagen, **Together.ai** (Flux.1 Schnell) |
@@ -32,7 +32,8 @@
 ### 2.1 Árvore de Componentes
 
 ```
-App.tsx (42KB — componente raiz, orquestra tudo)
+App.tsx (Componente raiz, orquestra tudo)
+├── ThemeProvider (ThemeContext.tsx) — Gestão de Tema Dark/Light
 ├── SettingsPanel.tsx — Config de API keys, providers, paths
 ├── ProfileEditor.tsx — Criar/editar perfis de canal + prompts
 ├── Dashboard.tsx — Métricas e overview
@@ -178,11 +179,21 @@ Funções de IA genéricas com routing dinâmico entre providers.
 | `generateImage(prompt, ratio, config)` | Geração de imagens via Gemini/Flux |
 | `generateVideoMetadata(profile, script, config)` | Gera título, descrição, tags SEO |
 
-### 4.4 PersistenceService (`services/PersistenceService.ts`)
+### 4.4 EditorPersistenceService (`services/EditorPersistenceService.ts`)
+
+Gerencia a persistência híbrida (Disco Local + Supabase) para o Editor Visual e Preferências do Usuário.
+
+| Método | Descrição |
+|--------|-----------|
+| `savePreferences(prefs)` | Salva no disco local (`preferences.json`) e Supabase |
+| `loadPreferences()` | Carrega de ambas as fontes com merge |
+| `saveEditorProject(project)`| Persiste configuração do projeto do editor |
+
+### 4.5 PersistenceService (`services/PersistenceService.ts`)
 
 Gerencia perfis de canal e prompts (Supabase + localStorage).
 
-### 4.5 AudioStorageService (`services/AudioStorageService.ts`)
+### 4.6 AudioStorageService (`services/AudioStorageService.ts`)
 
 Armazena áudio binário (WAV) no IndexedDB para evitar `QuotaExceededError` no localStorage.
 
@@ -192,15 +203,15 @@ Armazena áudio binário (WAV) no IndexedDB para evitar `QuotaExceededError` no 
 | `loadAudio(projectId)` | Recupera dados do áudio |
 | `deleteAudio(projectId)` | Remove dados do áudio |
 
-### 4.6 JobQueueService (`services/JobQueueService.ts`)
+### 4.7 JobQueueService (`services/JobQueueService.ts`)
 
 Sistema de fila de jobs (legado, anterior ao Kanban). Gerencia execução concorrente com limites.
 
-### 4.7 LlmModelService (`services/llmModelService.ts`)
+### 4.8 LlmModelService (`services/llmModelService.ts`)
 
 Catálogo de modelos de IA disponíveis por provider (Gemini, OpenAI, OpenRouter).
 
-### 4.8 AudioCompressService (`services/AudioCompressService.ts`)
+### 4.9 AudioCompressService (`services/AudioCompressService.ts`)
 
 Comprime áudio WAV → MP3 via FFmpeg nativo (Tauri invoke).
 
@@ -210,7 +221,7 @@ Comprime áudio WAV → MP3 via FFmpeg nativo (Tauri invoke).
 | `compressProjectAudio(projectId, onLog)` | Orquestra compressão completa |
 | `getTempPath(filename)` | Caminho temporário dinâmico via Tauri |
 
-### 4.9 ElevenLabsService (`services/ElevenLabsService.ts`)
+### 4.10 ElevenLabsService (`services/ElevenLabsService.ts`)
 
 Serviço dedicado para interação com a API da Eleven Labs.
 
@@ -221,7 +232,7 @@ Serviço dedicado para interação com a API da Eleven Labs.
 | `getUserInfo()` | Obtém dados de assinatura e créditos restantes |
 | `generateAudio(text, voiceId, modelId, settings)` | Gera áudio e retorna Blob |
 
-### 4.10 GeminiService — TTS (`services/geminiService.ts`)
+### 4.11 GeminiService — TTS (`services/geminiService.ts`)
 
 Função `generateSpeech` usa o modelo dedicado `gemini-2.5-flash-preview-tts`.
 
@@ -232,7 +243,7 @@ Função `generateSpeech` usa o modelo dedicado `gemini-2.5-flash-preview-tts`.
 | Config | `responseModalities: ['AUDIO']`, `speechConfig.voiceConfig.prebuiltVoiceConfig` |
 | Vozes disponíveis | 30 vozes (Zephyr, Puck, Kore, Charon, Fenrir, Aoede, etc.) |
 
-### 4.11 RunwareService (`services/runwareService.ts`)
+### 4.12 RunwareService (`services/runwareService.ts`)
 
 Serviço para geração de imagens via API RunWare (Flux.1 Schnell).
 
@@ -248,7 +259,7 @@ Serviço para geração de imagens via API RunWare (Flux.1 Schnell).
 | Formato de saída | JPEG via URL |
 | CFGScale | 1 |
 
-### 4.12 Image Providers — Arquitetura Escalável (`services/imageProviders.ts`)
+### 4.13 Image Providers — Arquitetura Escalável (`services/imageProviders.ts`)
 
 Strategy Pattern + Registry para geração de imagens com múltiplos providers.
 
@@ -279,7 +290,7 @@ Strategy Pattern + Registry para geração de imagens com múltiplos providers.
 
 **Segurança:** API keys são mascaradas nos logs via `maskGeminiKey()` — exibe apenas 5+3 caracteres.
 
-### 4.13 Gemini Key Manager (`lib/geminiKeyManager.ts`)
+### 4.14 Gemini Key Manager (`lib/geminiKeyManager.ts`)
 
 Gerenciamento de múltiplas chaves Gemini com rotação automática.
 
@@ -301,7 +312,7 @@ Gerenciamento de múltiplas chaves Gemini com rotação automática.
 | Layout fixo | Header + Logs (h-300px scroll) + Footer permanecem com tamanho constante |
 | Callback `onLog` | Providers enviam logs para o modal via callback opcional |
 
-### 4.14 StoryboardPlanner (`services/storyboardPlanner.ts`)
+### 4.15 StoryboardPlanner (`services/storyboardPlanner.ts`)
 
 Serviço de inteligência visual para consolidação de cenas.
 
@@ -314,7 +325,7 @@ Serviço de inteligência visual para consolidação de cenas.
 - Gera prompts otimizados para modelos de imagem (Flux/Gemini).
 - Permite que o usuário revise e edite os prompts no estágio `review` antes da geração real.
 
-### 4.12 ReferenceService (`services/ReferenceService.ts`)
+### 4.16 ReferenceService (`services/ReferenceService.ts`)
 
 Fachada para busca de vídeos de referência e transcrição.
 
@@ -324,13 +335,13 @@ Fachada para busca de vídeos de referência e transcrição.
 | `transcribeReference(videoId, config)` | Transcreve via APIFY (wrapper do apifyClient) |
 | `log(jobId, message, level)` | Log auxiliar para o Supabase |
 
-### 4.13 SystemMonitor (`services/SystemMonitor.ts`)
+### 4.17 SystemMonitor (`services/SystemMonitor.ts`)
 
 Simula telemetria de hardware (CPU, RAM, GPU, temperatura). Reage ao status dos jobs para simular picos de carga.
 
 ---
 
-## 4.14 Componentes TTS — UI e Funcionalidades
+## 4.18 Componentes TTS — UI e Funcionalidades
 
 ### ElevenLabsPanel (`components/ElevenLabsPanel.tsx`)
 
@@ -481,7 +492,18 @@ Modal de debug visual de prompts antes do envio para a IA.
 
 ---
 
-## 7. Regras de Negócio
+## 7. Sistema de Temas (Dark/Light)
+
+Implementado via **React Context** e **Variáveis CSS** (`index.css`).
+
+- **Variáveis Principais**: `--df-bg-primary`, `--df-bg-secondary`, `--df-text-primary`, `--df-border`.
+- **Atributo de Tema**: `[data-theme="dark"]` no `<html>`.
+- **Componentes**: `ThemeContext.tsx`, `ThemeToggleButton.tsx`.
+- **Persistência**: Via `EditorPersistenceService` (salva no `preferences.json`).
+
+---
+
+## 8. Regras de Negócio
 
 1.  **Filtro de views:** Só exibir vídeos com ≥ 500 views na busca (evita vídeos sem legendas)
 2.  **Supabase é opcional:** Tudo funciona com localStorage. Supabase é configurável via Settings
@@ -497,13 +519,12 @@ Modal de debug visual de prompts antes do envio para a IA.
 
 ## 8. Storage Map
 
-| Dado | Storage | Chave/DB |
-|------|---------|----------|
-| Projetos | localStorage | `DARK_FACTORY_PROJECTS_V1` |
-| Config (EngineConfig) | localStorage | via SettingsPanel |
-| Perfils de canal | localStorage + Supabase | `DARK_CHANNELS_V1` |
-| Prompts de canal | localStorage + Supabase | `DARK_CHANNEL_PROMPTS_V1` |
-| Áudio binário (WAV) | **IndexedDB** | DB: `dark-factory-audio`, Store: `audio-files` |
+| Projetos | Disco Local | `data/projects/{id}/project.json` |
+| Editor Projects | Disco Local | `data/editor/{id}.json` |
+| Config (EngineConfig) | Disco Local | `data/preferences.json` |
+| Perfils de canal | Disco Local + Supabase | `data/profiles.json` |
+| Prompts de canal | Disco Local + Supabase | `data/prompts.json` |
+| Áudio binário (WAV) | Disco Local | `data/projects/{id}/audio.wav` |
 
 ---
 
@@ -652,8 +673,10 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-02-21 | **Estágio 6 — Imagens & Storyboard**: Implementado agrupamento de cenas via `storyboardPlanner` (LLM). Geração de imagens agora suporta **multi-select** no Storyboard. Adicionado **Interpretador de Erros via IA** (`interpretErrorWithAI`) usando DeepSeek/OpenRouter para diagnósticos assertivos. Refinamentos de UI: zoom/lightbox no Storyboard, overlay "CRIANDO...", e limpeza nos botões de geração. |
 | 2026-03-01 | **Together.ai Provider**: Adicionado `TogetherProvider` para geração de imagens FLUX.1 Schnell via API REST Together.ai (`api.together.xyz`). Seletor de modelos reorganizado com `<optgroup>` agrupado por provider (RunWare, Together.ai). Adicionado campo `providerGroup` ao `ImageModel`. Nova API key `together` no `EngineConfig`. |
 | 2026-03-01 | **Travas de Segurança (Geração de Imagens)**: Implementadas 3 proteções no `handleGenerateImages` do `StageDetailsModal.tsx`: (1) **Anti double-click** via `isGeneratingRef` com liberação no `finally`, (2) **Confirmação de substituição** com `window.confirm` se já existem imagens geradas, (3) **Modo Teste** (DESATIVADO) — constante `TEST_MODE_MAX_IMAGES` permanece no código como referência, basta descomentar o bloco para reativar o limite. **Evolução futura**: geração paralela em batches de 5 para ganho de performance sem causar rate limit. |
-| 2026-03-02 | **Estágio 7 — Vídeo Final**: Implementado `processVideoStage` no `PipelineExecutor`. Criado `VideoRenderService.ts` — orquestra exportação de assets (MP3 + .ass + imagens por cena) para temp, gera concat file, executa FFmpeg nativo (H.264 CRF20 + AAC 192k), salva MP4 em `Videos/DarkVideoFactory/`. Reescrito `ffmpegGenerator.ts` com funções nativas (`buildConcatFileContent`, `buildRenderArgs`). UI no `StageDetailsModal` com player `<video>` via `convertFileSrc`. Capabilities Tauri expandidas com `$VIDEO` e `$TEMP`. |
-| 2026-03-04 | **Storage Local em Disco**: Refatoração de armazenamento abandonando `localStorage/IndexedDB` devido a limites de quota. Criados `DiskStorageService` e `MigrationService` para persistir dados (projetos, configs, perfis, audio PCM) nativamente na pasta `PROJECT_DIR/data/` do projeto associado ao drive Z:. Integração robusta e assíncrona com comandos nativos do Tauri fs. |
+| 2026-03-02 | **Estágio 7 — Vídeo Final**: Implementado `processVideoStage`. Criado `VideoRenderService.ts` — orquestra exportação de assets e renderização FFmpeg. |
+| 2026-03-04 | **Storage Local em Disco**: Refatoração total para JSON-on-Disk (`data/`). Criados `DiskStorageService` e `MigrationService`. |
+| 2026-03-12 | **Sprint 0: Infraestrutura do Editor**: Criado `EditorPersistenceService`, tipos globais do editor (`Track`, `Clip`), e integração Supabase (`user_preferences`, `editor_projects`). |
+| 2026-03-12 | **Sprint 1: Sistema de Temas**: Implementado `ThemeContext` (Dark/Light mode) com persistência e migração de toda a UI para variáveis CSS (`--df-*`). |
 
 ## 14. Inteligência e Otimização
 

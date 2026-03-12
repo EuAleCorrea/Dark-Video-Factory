@@ -45,6 +45,9 @@ git push DarkVideoFactory Desktop_Video_Factory
 3. **Guard no Supabase** — Sempre usar `isSupabaseConfigured()` antes de chamar Supabase
 4. **`.gitignore`** — `src-tauri/target/` nunca deve ser commitado
 5. **Restart Automático** — Sempre que uma implementação for aplicada, matar o serviço atual e reiniciar (npx tauri dev) sem perguntar.
+6. **Tema e CSS** — NUNCA usar cores hardcoded (ex: `bg-white`, `text-black`). Usar variáveis de tema do `index.css` (ex: `bg-theme-primary`, `text-theme-primary`, `border-theme`).
+7. **Persistência do Editor** — Usar `EditorPersistenceService` para carregar/salvar preferências e projetos do editor visual.
+8. **Dark Mode** — Todo novo componente deve ser testado em Dark e Light mode. Usar o `useTheme()` para lógica condicional se necessário.
 
 ## 📋 PRD — Documentação Técnica Obrigatória
 
