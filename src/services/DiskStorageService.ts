@@ -48,12 +48,24 @@ export async function ensureDir(dirPath: string): Promise<void> {
 
 /**
  * Initialize the base directory structure on first boot.
- * Creates: {PROJECT_DIR}/data/ and {PROJECT_DIR}/data/projects/
+ * Creates: {PROJECT_DIR}/data/, data/projects/, and data/editor/
  */
 export async function initStorage(): Promise<void> {
     const base = await getBasePath();
     await ensureDir(base);
     await ensureDir(joinPath(base, 'projects'));
+    await ensureDir(joinPath(base, 'editor'));
+
+    // Inicializar preferences.json se não existir
+    const prefsPath = joinPath(base, 'preferences.json');
+    const prefsExist = await invoke<boolean>('file_exists', { path: prefsPath });
+    if (!prefsExist) {
+        const defaultPrefs = JSON.stringify({ theme: { mode: 'dark' } }, null, 2);
+        const bytes = Array.from(new TextEncoder().encode(defaultPrefs));
+        await invoke('write_file', { path: prefsPath, content: bytes });
+        console.log('[DiskStorage] 📝 preferences.json criado com defaults');
+    }
+
     console.log(`[DiskStorage] ✅ Storage initialized at: ${base}`);
 }
 

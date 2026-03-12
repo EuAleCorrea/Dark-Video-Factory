@@ -17,12 +17,12 @@ interface ProjectCardProps {
 }
 
 const STATUS_CONFIG: Record<string, { icon: any; label: string; color: string; bg: string }> = {
-    ready: { icon: CheckCircle, label: 'Pronto', color: '#10B981', bg: '#ECFDF5' },
-    pending: { icon: Hourglass, label: 'Pendente', color: '#F59E0B', bg: '#FFFBEB' },
-    processing: { icon: Loader2, label: 'Processando', color: '#8B5CF6', bg: '#F5F3FF' },
-    waiting: { icon: Clock, label: 'Aguardando', color: '#64748B', bg: '#F1F5F9' },
-    error: { icon: AlertTriangle, label: 'Erro', color: '#EF4444', bg: '#FEF2F2' },
-    review: { icon: CheckCircle, label: '✅ Pronto', color: '#10B981', bg: '#ECFDF5' },
+    ready: { icon: CheckCircle, label: 'Pronto', color: '#10B981', bg: 'rgba(16, 185, 129, 0.12)' },
+    pending: { icon: Hourglass, label: 'Pendente', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.12)' },
+    processing: { icon: Loader2, label: 'Processando', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.12)' },
+    waiting: { icon: Clock, label: 'Aguardando', color: '#64748B', bg: 'rgba(100, 116, 139, 0.12)' },
+    error: { icon: AlertTriangle, label: 'Erro', color: '#EF4444', bg: 'rgba(239, 68, 68, 0.12)' },
+    review: { icon: CheckCircle, label: '✅ Pronto', color: '#10B981', bg: 'rgba(16, 185, 129, 0.12)' },
 };
 
 // Mapping of PipelineStage to the StageDataMap key
@@ -96,11 +96,11 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
     return (
         <div
             className={`
-        relative bg-white border rounded-xl p-4 cursor-pointer transition-all duration-200
-        hover:shadow-md hover:-translate-y-0.5 group
+        relative border rounded-xl p-4 cursor-pointer transition-all duration-200
+        hover:shadow-md hover:-translate-y-0.5 group bg-white
         ${isSelected
                     ? 'border-primary shadow-sm ring-2 ring-primary/20'
-                    : 'border-[#E2E8F0] hover:border-[#CBD5E1]'
+                    : 'border-theme hover:border-theme-hover'
                 }
       `}
             onClick={onClick}
@@ -117,7 +117,7 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
 
             {/* Thumbnail */}
             {thumbnail && (
-                <div className="mb-3 rounded-lg overflow-hidden border border-gray-100">
+                <div className="mb-3 rounded-lg overflow-hidden border border-theme">
                     <img
                         src={thumbnail}
                         alt=""
@@ -128,7 +128,7 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
             )}
 
             {/* Title */}
-            <h4 className="text-base font-semibold text-[#0F172A] line-clamp-2 leading-snug mb-2.5 pl-7">
+            <h4 className="text-base font-semibold text-theme-primary line-clamp-2 leading-snug mb-2.5 pl-7">
                 {project.title}
             </h4>
 
@@ -148,17 +148,17 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
                     {statusConf.label}
                 </div>
 
-                <span className="text-sm text-[#94A3B8]">
+                <span className="text-sm text-theme-placeholder">
                     {new Date(project.updatedAt).toLocaleDateString('pt-BR')}
                 </span>
             </div>
 
             {/* Stage Icons Bar — abaixo da data */}
-            <div className="flex items-center gap-1.5 mt-2.5 pt-2.5 border-t border-gray-100">
+            <div className="flex items-center gap-1.5 mt-2.5 pt-2.5 border-t border-theme">
                 {/* Lixeira (sempre presente) */}
                 <button
                     onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                    className="p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    className="p-1.5 rounded-md text-theme-muted hover:text-red-500 hover:bg-red-50 transition-colors"
                     title="Remover do pipeline"
                 >
                     <Trash2 size={15} />
@@ -166,7 +166,7 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
 
                 {/* Separador */}
                 {completedStages.length > 0 && (
-                    <div className="w-px h-4 bg-gray-200" />
+                    <div className="w-px h-4" style={{ backgroundColor: 'var(--df-border)' }} />
                 )}
 
                 {/* Ícones das etapas concluídas */}

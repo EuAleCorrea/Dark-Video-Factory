@@ -3,8 +3,9 @@ import {
   Activity, Layers, Settings, Play, StopCircle, Terminal as TerminalIcon,
   CheckCircle, Search, FileText, Loader2, X, MonitorPlay, FolderOpen,
   RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Cloud, ChevronDown, Zap, AlertTriangle, Info,
-  Plus, LayoutGrid, Mic, Image
+  Plus, LayoutGrid, Mic, Image, Sun, Moon
 } from 'lucide-react';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { ChannelProfile, JobStatus, PipelineStep, VideoFormat, SystemMetrics, EngineConfig, ReferenceVideo, VideoJob, VideoProject, PipelineStage, PIPELINE_STAGES_ORDER, STAGE_META } from './types';
 import ProfileEditor from './components/ProfileEditor';
 import Terminal from './components/Terminal';
@@ -24,6 +25,7 @@ import { ElevenLabsPanel } from './components/ElevenLabsPanel';
 import { GoogleTTSPanel } from './components/GoogleTTSPanel';
 import { ImageGeneratorPanel } from './components/ImageGeneratorPanel';
 import { PexelsHub } from './components/PexelsHub';
+import { ExtractAudioPanel } from './components/ExtractAudioPanel';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
 import { ProjectService } from './services/ProjectService';
@@ -56,8 +58,24 @@ const INITIAL_CONFIG: EngineConfig = {
   }
 };
 
+/** Botão para alternar entre Dark e Light mode */
+function ThemeToggleButton() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      onClick={toggleTheme}
+      className="p-2.5 rounded-xl transition-all text-theme-muted hover:text-theme-primary"
+      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--df-bg-hover)'}
+      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+      title={theme === 'dark' ? 'Mudar para Light Mode' : 'Mudar para Dark Mode'}
+    >
+      {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+    </button>
+  );
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator' | 'pexels'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator' | 'pexels' | 'extract-audio'>('pipeline');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
@@ -735,6 +753,7 @@ export default function App() {
   const getSelectedProfile = () => profiles.find(p => p.id === selectedJob?.channelId);
 
   return (
+    <ThemeProvider config={config}>
     <StatusModalProvider>
       <>
         <VideoSelectorModal
@@ -761,19 +780,19 @@ export default function App() {
         )}
 
         {/* ========== HEADER ========== */}
-        <header className="h-14 border-b border-[#E2E8F0] flex items-center justify-between px-5 bg-white/80 backdrop-blur-xl z-50 shrink-0">
+        <header className="h-14 border-b flex items-center justify-between px-5 backdrop-blur-xl z-50 shrink-0 border-theme" style={{ backgroundColor: 'var(--df-bg-glass)' }}>
           <div className="flex items-center gap-5">
             {/* LOGO */}
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
                 <Activity className="text-white w-5 h-5" strokeWidth={2.5} />
               </div>
-              <span className="font-semibold text-[#0F172A] tracking-tight text-lg">
+              <span className="font-semibold tracking-tight text-lg text-theme-primary">
                 Dark Factory <span className="text-sm text-primary/70 ml-1">v2.1</span>
               </span>
             </div>
 
-            <div className="h-6 w-px bg-[#E2E8F0]" />
+            <div className="h-6 w-px border-theme" style={{ backgroundColor: 'var(--df-border)' }} />
 
             {/* SYSTEM STATUS */}
             <div className="flex items-center gap-3 text-base">
@@ -781,28 +800,28 @@ export default function App() {
                 <span className="w-2.5 h-2.5 rounded-full bg-primary status-pulse" />
                 <span className="text-primary font-medium">Online</span>
               </div>
-              <span className="text-[#94A3B8] text-sm">{uptime}</span>
+              <span className="text-theme-placeholder text-sm">{uptime}</span>
             </div>
 
-            <div className="h-6 w-px bg-[#E2E8F0]" />
+            <div className="h-6 w-px" style={{ backgroundColor: 'var(--df-border)' }} />
 
             {/* METRICS */}
-            <div className="hidden lg:flex items-center gap-5 text-sm text-[#64748B]">
+            <div className="hidden lg:flex items-center gap-5 text-sm text-theme-muted">
               <div className="flex items-center gap-2">
                 <span className="text-[#3B82F6] text-sm font-medium">CPU</span>
-                <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                <div className="w-20 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--df-border)' }}>
                   <div className="h-full bg-[#3B82F6] rounded-full transition-all" style={{ width: `${metrics.cpuUsage}%` }} />
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[#8B5CF6] text-sm font-medium">GPU</span>
-                <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                <div className="w-20 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--df-border)' }}>
                   <div className="h-full bg-[#8B5CF6] rounded-full transition-all" style={{ width: `${metrics.gpuUsage}%` }} />
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[#F59E0B] text-sm font-medium">RAM</span>
-                <div className="w-20 h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                <div className="w-20 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--df-border)' }}>
                   <div className="h-full bg-[#F59E0B] rounded-full transition-all" style={{ width: `${metrics.ramUsage}%` }} />
                 </div>
               </div>
@@ -810,7 +829,7 @@ export default function App() {
           </div>
 
           {/* RIGHT SIDE */}
-          <div className="flex items-center gap-4 text-base text-[#64748B]">
+          <div className="flex items-center gap-4 text-base text-theme-muted">
             <div className="hidden md:flex items-center gap-2">
               <HardDrive size={16} />
               <span>Nós: {metrics.activeContainers}</span>
@@ -819,9 +838,12 @@ export default function App() {
               <Thermometer size={16} />
               <span>{metrics.temperature}°C</span>
             </div>
+            <ThemeToggleButton />
             <button
               onClick={() => setActiveTab('settings')}
-              className="p-2.5 hover:bg-[#F1F5F9] rounded-xl transition-colors text-[#64748B] hover:text-[#0F172A]"
+              className="p-2.5 rounded-xl transition-colors text-theme-muted hover:text-theme-primary" style={{ ['--tw-bg-opacity' as any]: 1 }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--df-bg-hover)'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             >
               <Settings size={20} />
             </button>
@@ -832,7 +854,7 @@ export default function App() {
         <div className="flex flex-1 overflow-hidden">
 
           {/* ========== SIDEBAR (FIXED) ========== */}
-          <aside className="w-64 border-r border-[#E2E8F0] bg-white flex flex-col shrink-0 z-50">
+          <aside className="w-64 border-r flex flex-col shrink-0 z-50 border-theme" style={{ backgroundColor: 'var(--df-bg-secondary)' }}>
             <nav className="flex-1 py-5 flex flex-col gap-1.5 px-4">
               {[
                 { id: 'pipeline', icon: LayoutGrid, label: 'Pipeline' },
@@ -840,6 +862,7 @@ export default function App() {
                 { id: 'profiles', icon: Layers, label: 'Perfis' },
                 { id: 'image-generator', icon: Image, label: 'Gerador de Imagens' },
                 { id: 'pexels', icon: Search, label: 'Pexels Hub' },
+                { id: 'extract-audio', icon: Mic, label: 'Extrair Audio' },
                 { id: 'settings', icon: Settings, label: 'Configuração' },
                 { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
                 { id: 'google-tts', icon: Mic, label: 'Google TTS' },
@@ -849,8 +872,11 @@ export default function App() {
                   onClick={() => setActiveTab(item.id as typeof activeTab)}
                   className={`w-full h-12 flex items-center gap-3 px-4 rounded-xl transition-all duration-200 ${activeTab === item.id
                     ? 'bg-primary/10 text-primary'
-                    : 'text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
+                    : 'text-theme-muted hover:text-theme-primary'
                     }`}
+                  style={activeTab !== item.id ? {} : undefined}
+                  onMouseEnter={(e) => { if (activeTab !== item.id) e.currentTarget.style.backgroundColor = 'var(--df-bg-hover)'; }}
+                  onMouseLeave={(e) => { if (activeTab !== item.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
                 >
                   <item.icon size={20} className="shrink-0" />
                   <span className="text-base font-medium">
@@ -873,15 +899,15 @@ export default function App() {
           </aside>
 
           {/* ========== WORKSPACE ========== */}
-          <main className="flex-1 flex flex-col overflow-hidden bg-[#F8FAFC]">
+          <main className="flex-1 flex flex-col overflow-hidden" style={{ backgroundColor: 'var(--df-bg-primary)' }}>
             {activeTab === 'pipeline' ? (
               <div className="flex-1 flex flex-col overflow-hidden">
                 {/* Pipeline Header */}
-                <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] shrink-0">
+                <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 border-theme" style={{ backgroundColor: 'var(--df-bg-secondary)' }}>
                   <div className="flex items-center gap-3">
                     <LayoutGrid size={20} className="text-primary" />
-                    <h2 className="text-base font-semibold text-[#0F172A]">Pipeline de Produção</h2>
-                    <span className="text-sm text-[#94A3B8] bg-[#F1F5F9] px-3 py-1 rounded-lg">
+                    <h2 className="text-base font-semibold text-theme-primary">Pipeline de Produção</h2>
+                    <span className="text-sm text-theme-placeholder px-3 py-1 rounded-lg" style={{ backgroundColor: 'var(--df-bg-hover)' }}>
                       {projects.length} projetos
                     </span>
                   </div>
@@ -889,7 +915,8 @@ export default function App() {
                     {/* Profile Selector */}
                     <div className="relative">
                       <select
-                        className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-2.5 text-sm text-[#0F172A] appearance-none cursor-pointer hover:border-[#CBD5E1] pr-8 transition-colors"
+                        className="border rounded-xl px-4 py-2.5 text-sm appearance-none cursor-pointer pr-8 transition-colors border-theme text-theme-primary"
+                        style={{ backgroundColor: 'var(--df-bg-input)' }}
                         value={selectedProfileId}
                         onChange={(e) => setSelectedProfileId(e.target.value)}
                       >
@@ -1042,6 +1069,8 @@ export default function App() {
               <ImageGeneratorPanel config={config} />
             ) : activeTab === 'pexels' ? (
               <PexelsHub mode="hub" config={config} />
+            ) : activeTab === 'extract-audio' ? (
+              <ExtractAudioPanel config={config} />
             ) : (
               <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
                 <SettingsPanel config={config} onSave={setConfig} />
@@ -1193,5 +1222,6 @@ export default function App() {
         />
       </>
     </StatusModalProvider>
+    </ThemeProvider>
   );
 }

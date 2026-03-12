@@ -19,18 +19,26 @@ export default function KanbanColumn({ stage, meta, projects, selectedIds, onTog
     const count = projects.length;
     const hasProjects = count > 0;
 
+    // Converte cor hex para rgba com opacidade — funciona em dark e light mode
+    const hexToRgba = (hex: string, alpha: number) => {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
     return (
         <div className="w-80 shrink-0 flex flex-col h-full">
             {/* Column Header */}
             <div
                 className="flex items-center gap-2.5 px-4 py-3 rounded-xl mb-2.5"
-                style={{ backgroundColor: meta.bgColor }}
+                style={{ backgroundColor: hexToRgba(meta.color, 0.12) }}
             >
                 <div
                     className="w-2.5 h-2.5 rounded-full"
                     style={{ backgroundColor: meta.color }}
                 />
-                <span className="text-base font-semibold text-[#0F172A] truncate">
+                <span className="text-base font-semibold text-theme-primary truncate">
                     {meta.label}
                 </span>
                 <span
@@ -75,8 +83,8 @@ export default function KanbanColumn({ stage, meta, projects, selectedIds, onTog
                         ))}
                         {provided.placeholder}
                         {!hasProjects && (
-                            <div className="flex items-center justify-center h-24 border border-dashed border-[#E2E8F0] rounded-xl">
-                                <span className="text-sm text-[#94A3B8]">Nenhum projeto</span>
+                            <div className="flex items-center justify-center h-24 border border-dashed border-theme rounded-xl">
+                                <span className="text-sm text-theme-placeholder">Nenhum projeto</span>
                             </div>
                         )}
                     </div>

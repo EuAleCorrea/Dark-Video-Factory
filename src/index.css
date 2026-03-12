@@ -1,7 +1,81 @@
 @import "tailwindcss";
 
 /* ========================================
-   DARK FACTORY — Light Professional Theme
+   DARK FACTORY — Dual Theme System
+   Suporta Dark e Light mode via data-theme
+   ======================================== */
+
+/* ========================================
+   THEME VARIABLES — Light Mode (default)
+   ======================================== */
+
+:root,
+:root[data-theme="light"] {
+  --df-bg-primary: #F8FAFC;
+  --df-bg-secondary: #FFFFFF;
+  --df-bg-tertiary: #F1F5F9;
+  --df-bg-input: #FFFFFF;
+  --df-bg-hover: #F1F5F9;
+  --df-bg-overlay: rgba(0, 0, 0, 0.5);
+  --df-bg-glass: rgba(255, 255, 255, 0.8);
+  --df-bg-code: #0F172A;
+
+  --df-text-primary: #0F172A;
+  --df-text-secondary: #334155;
+  --df-text-muted: #64748B;
+  --df-text-placeholder: #94A3B8;
+  --df-text-inverse: #FFFFFF;
+
+  --df-border: #E2E8F0;
+  --df-border-hover: #CBD5E1;
+  --df-border-focus: #0D9488;
+
+  --df-scrollbar: #CBD5E1;
+  --df-scrollbar-hover: #94A3B8;
+
+  --df-sidebar-hover: rgba(13, 148, 136, 0.06);
+  --df-sidebar-active: rgba(13, 148, 136, 0.1);
+
+  --df-card-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --df-grid-dot: #E2E8F0;
+}
+
+/* ========================================
+   THEME VARIABLES — Dark Mode
+   ======================================== */
+
+:root[data-theme="dark"] {
+  --df-bg-primary: #0F1219;
+  --df-bg-secondary: #1A1F2E;
+  --df-bg-tertiary: #242938;
+  --df-bg-input: #1A1F2E;
+  --df-bg-hover: #242938;
+  --df-bg-overlay: rgba(0, 0, 0, 0.7);
+  --df-bg-glass: rgba(26, 31, 46, 0.85);
+  --df-bg-code: #0A0D14;
+
+  --df-text-primary: #E2E8F0;
+  --df-text-secondary: #CBD5E1;
+  --df-text-muted: #94A3B8;
+  --df-text-placeholder: #64748B;
+  --df-text-inverse: #0F172A;
+
+  --df-border: #2D3748;
+  --df-border-hover: #4A5568;
+  --df-border-focus: #14B8A6;
+
+  --df-scrollbar: #4A5568;
+  --df-scrollbar-hover: #718096;
+
+  --df-sidebar-hover: rgba(20, 184, 166, 0.08);
+  --df-sidebar-active: rgba(20, 184, 166, 0.15);
+
+  --df-card-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --df-grid-dot: #2D3748;
+}
+
+/* ========================================
+   TAILWIND v4 @theme — Cores fixas (não mudam com tema)
    ======================================== */
 
 @theme {
@@ -9,14 +83,14 @@
   --color-primary-hover: #0F766E;
   --color-primary-muted: rgba(13, 148, 136, 0.1);
   --color-primary-light: #CCFBF1;
-  --color-background: #F8FAFC;
-  --color-surface: #FFFFFF;
-  --color-surface-hover: #F1F5F9;
-  --color-border: #E2E8F0;
-  --color-border-hover: #CBD5E1;
-  --color-foreground: #0F172A;
-  --color-muted: #64748B;
-  --color-muted-foreground: #94A3B8;
+  --color-background: var(--df-bg-primary);
+  --color-surface: var(--df-bg-secondary);
+  --color-surface-hover: var(--df-bg-hover);
+  --color-border: var(--df-border);
+  --color-border-hover: var(--df-border-hover);
+  --color-foreground: var(--df-text-primary);
+  --color-muted: var(--df-text-muted);
+  --color-muted-foreground: var(--df-text-placeholder);
   --color-danger: #EF4444;
   --color-warning: #F59E0B;
   --color-info: #3B82F6;
@@ -40,8 +114,8 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 16px;
   line-height: 1.5;
-  background-color: #F8FAFC;
-  color: #0F172A;
+  background-color: var(--df-bg-primary);
+  color: var(--df-text-primary);
   overflow: hidden;
   height: 100%;
   width: 100%;
@@ -49,6 +123,7 @@ body {
   padding: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 #root {
@@ -59,7 +134,7 @@ body {
 }
 
 /* ========================================
-   SCROLLBAR — Subtle & Clean
+   SCROLLBAR — Theme-aware
    ======================================== */
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -72,45 +147,45 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
+  background: var(--df-scrollbar);
   border-radius: 999px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+  background: var(--df-scrollbar-hover);
 }
 
 /* ========================================
-   FORM ELEMENTS — Modern Clean
+   FORM ELEMENTS — Theme-aware
    ======================================== */
 
 input,
 textarea,
 select {
-  background-color: #FFFFFF;
-  border: 1px solid #E2E8F0;
+  background-color: var(--df-bg-input);
+  border: 1px solid var(--df-border);
   border-radius: 10px;
-  color: #0F172A;
+  color: var(--df-text-primary);
   font-family: inherit;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.3s ease;
 }
 
 input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: #0D9488;
+  border-color: var(--df-border-focus);
   box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
 }
 
 input::placeholder,
 textarea::placeholder {
-  color: #94A3B8;
+  color: var(--df-text-placeholder);
 }
 
 select option {
-  background-color: #FFFFFF;
-  color: #0F172A;
+  background-color: var(--df-bg-secondary);
+  color: var(--df-text-primary);
 }
 
 /* Remove number spinners */
@@ -148,23 +223,23 @@ input[type="number"] {
 .status-bar {
   height: 3px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #0D9488 var(--progress, 0%), #E2E8F0 var(--progress, 0%));
+  background: linear-gradient(90deg, #0D9488 var(--progress, 0%), var(--df-border) var(--progress, 0%));
 }
 
 /* ========================================
-   CARDS — Modern with subtle depth
+   CARDS — Theme-aware
    ======================================== */
 
 .card-surface {
-  background: #FFFFFF;
-  border: 1px solid #E2E8F0;
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border);
   border-radius: 16px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.3s ease;
 }
 
 .card-surface:hover {
-  border-color: #CBD5E1;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  border-color: var(--df-border-hover);
+  box-shadow: var(--df-card-shadow);
 }
 
 /* ========================================
@@ -184,9 +259,17 @@ input[type="number"] {
   color: #059669;
 }
 
+:root[data-theme="dark"] .badge-success {
+  color: #34D399;
+}
+
 .badge-warning {
   background: rgba(245, 158, 11, 0.1);
   color: #D97706;
+}
+
+:root[data-theme="dark"] .badge-warning {
+  color: #FBBF24;
 }
 
 .badge-error {
@@ -194,9 +277,17 @@ input[type="number"] {
   color: #DC2626;
 }
 
+:root[data-theme="dark"] .badge-error {
+  color: #F87171;
+}
+
 .badge-info {
   background: rgba(59, 130, 246, 0.1);
   color: #2563EB;
+}
+
+:root[data-theme="dark"] .badge-info {
+  color: #60A5FA;
 }
 
 /* ========================================
@@ -254,23 +345,23 @@ input[type="number"] {
 }
 
 /* ========================================
-   GRID BACKGROUND — Subtle dots
+   GRID BACKGROUND — Theme-aware
    ======================================== */
 
 .grid-bg {
-  background-image: radial-gradient(circle at 1px 1px, #E2E8F0 1px, transparent 0);
+  background-image: radial-gradient(circle at 1px 1px, var(--df-grid-dot) 1px, transparent 0);
   background-size: 28px 28px;
 }
 
 /* ========================================
-   GLASS PANEL — Clean blur
+   GLASS PANEL — Theme-aware
    ======================================== */
 
 .glass-panel {
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--df-bg-glass);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(226, 232, 240, 0.8);
+  border: 1px solid var(--df-border);
 }
 
 /* ========================================
@@ -308,7 +399,7 @@ input[type="number"] {
 }
 
 /* ========================================
-   SIDEBAR ITEMS
+   SIDEBAR ITEMS — Theme-aware
    ======================================== */
 
 .sidebar-item {
@@ -316,12 +407,232 @@ input[type="number"] {
 }
 
 .sidebar-item:hover {
-  background: rgba(13, 148, 136, 0.06);
+  background: var(--df-sidebar-hover);
 }
 
 .sidebar-item.active {
-  background: rgba(13, 148, 136, 0.1);
+  background: var(--df-sidebar-active);
   border-left: 2px solid #0D9488;
+}
+
+/* ========================================
+   THEME-AWARE UTILITY CLASSES
+   Usados pelos componentes React com Tailwind
+   ======================================== */
+
+.bg-theme-primary { background-color: var(--df-bg-primary); }
+.bg-theme-secondary { background-color: var(--df-bg-secondary); }
+.bg-theme-tertiary { background-color: var(--df-bg-tertiary); }
+.bg-theme-input { background-color: var(--df-bg-input); }
+.bg-theme-hover { background-color: var(--df-bg-hover); }
+.bg-theme-code { background-color: var(--df-bg-code); }
+
+.text-theme-primary { color: var(--df-text-primary); }
+.text-theme-secondary { color: var(--df-text-secondary); }
+.text-theme-muted { color: var(--df-text-muted); }
+.text-theme-placeholder { color: var(--df-text-placeholder); }
+
+.border-theme { border-color: var(--df-border); }
+.border-theme-hover { border-color: var(--df-border-hover); }
+
+/* ========================================
+   THEME TOGGLE — Smooth transition
+   ======================================== */
+
+.theme-transition,
+.theme-transition * {
+  transition: background-color 0.3s ease,
+              color 0.3s ease,
+              border-color 0.3s ease,
+              box-shadow 0.3s ease;
+}
+
+/* ========================================
+   DARK MODE — Global Overrides
+   Corrige classes Tailwind hardcoded em todos os componentes
+   para funcionar corretamente no tema escuro.
+   ======================================== */
+
+/* --- Backgrounds --- */
+[data-theme="dark"] .bg-white {
+  background-color: var(--df-bg-secondary) !important;
+}
+
+[data-theme="dark"] .bg-\[\#F8FAFC\] {
+  background-color: var(--df-bg-primary) !important;
+}
+
+[data-theme="dark"] .bg-\[\#FFFFFF\] {
+  background-color: var(--df-bg-secondary) !important;
+}
+
+[data-theme="dark"] .bg-\[\#F1F5F9\] {
+  background-color: var(--df-bg-tertiary) !important;
+}
+
+[data-theme="dark"] .bg-white\/80 {
+  background-color: var(--df-bg-glass) !important;
+}
+
+[data-theme="dark"] .bg-slate-50,
+[data-theme="dark"] .bg-slate-100,
+[data-theme="dark"] .bg-gray-50,
+[data-theme="dark"] .bg-gray-100 {
+  background-color: var(--df-bg-tertiary) !important;
+}
+
+[data-theme="dark"] .bg-slate-50\/50 {
+  background-color: rgba(36, 41, 56, 0.5) !important;
+}
+
+[data-theme="dark"] .bg-gray-200 {
+  background-color: var(--df-border) !important;
+}
+
+/* --- Text Colors --- */
+[data-theme="dark"] .text-\[\#0F172A\] {
+  color: var(--df-text-primary) !important;
+}
+
+[data-theme="dark"] .text-\[\#334155\] {
+  color: var(--df-text-secondary) !important;
+}
+
+[data-theme="dark"] .text-\[\#64748B\] {
+  color: var(--df-text-muted) !important;
+}
+
+[data-theme="dark"] .text-\[\#94A3B8\] {
+  color: var(--df-text-placeholder) !important;
+}
+
+[data-theme="dark"] .text-gray-400,
+[data-theme="dark"] .text-gray-500 {
+  color: var(--df-text-muted) !important;
+}
+
+[data-theme="dark"] .text-gray-600,
+[data-theme="dark"] .text-gray-700,
+[data-theme="dark"] .text-gray-800,
+[data-theme="dark"] .text-gray-900,
+[data-theme="dark"] .text-slate-700,
+[data-theme="dark"] .text-slate-800,
+[data-theme="dark"] .text-slate-900 {
+  color: var(--df-text-primary) !important;
+}
+
+/* --- Borders --- */
+[data-theme="dark"] .border-\[\#E2E8F0\] {
+  border-color: var(--df-border) !important;
+}
+
+[data-theme="dark"] .border-\[\#CBD5E1\] {
+  border-color: var(--df-border-hover) !important;
+}
+
+[data-theme="dark"] .border-gray-100,
+[data-theme="dark"] .border-gray-200,
+[data-theme="dark"] .border-gray-300,
+[data-theme="dark"] .border-slate-100,
+[data-theme="dark"] .border-slate-200,
+[data-theme="dark"] .border-slate-300 {
+  border-color: var(--df-border) !important;
+}
+
+/* --- Hover States --- */
+[data-theme="dark"] .hover\:bg-\[\#F1F5F9\]:hover {
+  background-color: var(--df-bg-hover) !important;
+}
+
+[data-theme="dark"] .hover\:bg-gray-50:hover,
+[data-theme="dark"] .hover\:bg-gray-100:hover,
+[data-theme="dark"] .hover\:bg-slate-50:hover,
+[data-theme="dark"] .hover\:bg-slate-100:hover {
+  background-color: var(--df-bg-hover) !important;
+}
+
+[data-theme="dark"] .hover\:text-\[\#0F172A\]:hover {
+  color: var(--df-text-primary) !important;
+}
+
+[data-theme="dark"] .hover\:border-\[\#CBD5E1\]:hover {
+  border-color: var(--df-border-hover) !important;
+}
+
+/* --- Status Badges (colored backgrounds) --- */
+[data-theme="dark"] .bg-red-50,
+[data-theme="dark"] .bg-\[\#FEF2F2\] {
+  background-color: rgba(239, 68, 68, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-emerald-50,
+[data-theme="dark"] .bg-green-50,
+[data-theme="dark"] .bg-\[\#ECFDF5\] {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-amber-50,
+[data-theme="dark"] .bg-yellow-50,
+[data-theme="dark"] .bg-\[\#FFFBEB\] {
+  background-color: rgba(245, 158, 11, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-violet-50,
+[data-theme="dark"] .bg-purple-50,
+[data-theme="dark"] .bg-\[\#F5F3FF\] {
+  background-color: rgba(139, 92, 246, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-blue-50,
+[data-theme="dark"] .bg-\[\#EFF6FF\] {
+  background-color: rgba(59, 130, 246, 0.15) !important;
+}
+
+/* --- Hover on colored backgrounds --- */
+[data-theme="dark"] .hover\:bg-red-50:hover {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+}
+
+[data-theme="dark"] .hover\:bg-emerald-100:hover,
+[data-theme="dark"] .hover\:bg-green-100:hover {
+  background-color: rgba(16, 185, 129, 0.25) !important;
+}
+
+/* --- Dividers & Separators --- */
+[data-theme="dark"] .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+[data-theme="dark"] .divide-gray-200 > :not([hidden]) ~ :not([hidden]),
+[data-theme="dark"] .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+[data-theme="dark"] .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--df-border) !important;
+}
+
+/* --- Rings & Shadows --- */
+[data-theme="dark"] .ring-gray-200,
+[data-theme="dark"] .ring-slate-200 {
+  --tw-ring-color: var(--df-border) !important;
+}
+
+[data-theme="dark"] .shadow-sm,
+[data-theme="dark"] .shadow-md {
+  --tw-shadow-color: rgba(0, 0, 0, 0.3) !important;
+}
+
+/* --- Modal overlays --- */
+[data-theme="dark"] .bg-black\/40,
+[data-theme="dark"] .bg-black\/50 {
+  background-color: var(--df-bg-overlay) !important;
+}
+
+/* --- Code / Terminal blocks --- */
+[data-theme="dark"] .bg-\[\#1E293B\],
+[data-theme="dark"] .bg-slate-800,
+[data-theme="dark"] .bg-slate-900 {
+  background-color: var(--df-bg-code) !important;
+}
+
+/* --- Placeholder in Kanban --- */
+[data-theme="dark"] .border-dashed {
+  border-color: var(--df-border) !important;
 }
 
 /* ========================================
