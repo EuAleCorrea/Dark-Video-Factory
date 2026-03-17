@@ -1,17 +1,103 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play, Pause, SkipBack, SkipForward, Rewind, FastForward,
   Maximize2, Volume2
 } from 'lucide-react';
+import { EditorProject } from '../../types/editor';
+import { TimelineEngineService } from '../../services/TimelineEngineService';
 
 interface PreviewPanelProps {
   resolution?: { width: number; height: number };
+  project?: EditorProject;
+  currentTime?: number;
+  onTimeChange?: React.Dispatch<React.SetStateAction<number>>;
 }
 
-export function PreviewPanel({ resolution = { width: 1920, height: 1080 } }: PreviewPanelProps) {
+export function PreviewPanel({ 
+  resolution = { width: 1920, height: 1080 },
+  project,
+  currentTime = 0,
+  onTimeChange
+}: PreviewPanelProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const aspectRatio = resolution.width / resolution.height;
   const isPortrait = aspectRatio < 1;
+
+  // Calcula a duração baseada nos clips
+  const totalDuration = project ? Math.max(TimelineEngineService.getTimelineDuration(project.tracks), 1) : 60;
+
+  // Busca clips ativos
+  const activeVideoClip = project?.tracks
+    .find(t => t.type === 'video' && t.visible)?.clips
+    .find(c => currentTime >= c.startTime && currentTime < c.startTime + c.duration);
+
+  const activeSubtitleClip = project?.tracks
+    .find(t => t.type === 'subtitle' && t.visible)?.clips
+    .find(c => currentTime >= c.startTime && currentTime < c.startTime + c.duration);
+
+  const activeAudioClip = project?.tracks
+    .find(t => t.type === 'audio' && t.visible)?.clips
+    .find(c => currentTime >= c.startTime && currentTime < c.startTime + c.duration);
+
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const requestRef = useRef<number>(0);
+  const lastTimeRef = useRef<number>(0);
+
+  const animate = useCallback((time: number) => {
+    if (lastTimeRef.current !== 0 && onTimeChange) {
+      const deltaTime = (time - lastTimeRef.current) / 1000;
+      onTimeChange(prev => {
+        const nextTime = prev + deltaTime;
+        if (nextTime >= totalDuration) {
+          setIsPlaying(false);
+          return 0; // Rewinds to start or handle end
+        }
+        return nextTime;
+      });
+    }
+    lastTimeRef.current = time;
+    if (isPlaying) {
+      requestRef.current = requestAnimationFrame(animate);
+    }
+  }, [onTimeChange, totalDuration, isPlaying]);
+
+  useEffect(() => {
+    if (isPlaying) {
+      lastTimeRef.current = performance.now();
+      requestRef.current = requestAnimationFrame(animate);
+      if (audioRef.current) {
+        audioRef.current.play().catch(console.error);
+      }
+    } else {
+      cancelAnimationFrame(requestRef.current);
+      lastTimeRef.current = 0;
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    }
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [isPlaying, animate]);
+
+  // Sincroniza o audio time com o currentTime do projeto
+  useEffect(() => {
+    if (activeAudioClip && audioRef.current) {
+      const audioTime = currentTime - activeAudioClip.startTime + (activeAudioClip.sourceStart || 0);
+      const diff = Math.abs(audioRef.current.currentTime - audioTime);
+      // Evita setar o time a todo frame, apenas se desviar muito
+      if (diff > 0.2 || (!isPlaying && diff > 0.05)) {
+        audioRef.current.currentTime = audioTime;
+      }
+    }
+  }, [currentTime, activeAudioClip, isPlaying]);
+
+  // Formata HH:MM:SS.FF
+  const formatTimecode = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const f = Math.floor((seconds % 1) * 30);
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${f.toString().padStart(2, '0')}`;
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -61,11 +147,50 @@ export function PreviewPanel({ resolution = { width: 1920, height: 1080 } }: Pre
             <div className="absolute h-6 w-px bg-white/10" />
           </div>
 
-          {/* Empty State */}
-          <div className="flex flex-col items-center gap-2 z-10">
-            <Play size={32} className="text-white/15" />
-            <span className="text-[11px] text-white/20 font-medium">Preview</span>
-          </div>
+          {/* Main Visual Asset (Video/Image) */}
+          {activeVideoClip?.source && (activeVideoClip.source.type === 'video' || activeVideoClip.source.type === 'image') && activeVideoClip.source.url ? (
+            <img 
+              src={activeVideoClip.source.url} 
+              alt="Scene preview" 
+              className="absolute inset-0 w-full h-full object-contain"
+            />
+          ) : (
+            /* Empty State */
+            <div className="flex flex-col items-center gap-2 z-10">
+              <Play size={32} className="text-white/15" />
+              <span className="text-[11px] text-white/20 font-medium">Sem mídia neste tempo</span>
+            </div>
+          )}
+
+          {/* Audio Element Hidden */}
+          {activeAudioClip?.source.type === 'audio' && activeAudioClip.source.url && (
+            <audio 
+              ref={audioRef}
+              src={activeAudioClip.source.url} 
+              className="hidden"
+            />
+          )}
+
+          {/* Subtitles Overlay */}
+          {activeSubtitleClip?.source.type === 'subtitle' && (
+            <div className="absolute inset-x-0 bottom-[10%] flex justify-center pointer-events-none z-20">
+              <span 
+                className="text-center px-4 py-1"
+                style={{
+                  fontFamily: activeSubtitleClip.source.style?.fontName || 'sans-serif',
+                  fontSize: `${(activeSubtitleClip.source.style?.fontSize || 36)}px`,
+                  color: activeSubtitleClip.source.style?.primaryColor || 'white',
+                  WebkitTextStroke: activeSubtitleClip.source.style?.outlineColor ? `2px ${activeSubtitleClip.source.style?.outlineColor}` : '2px black',
+                  backgroundColor: activeSubtitleClip.source.style?.backgroundColor || 'transparent',
+                  textShadow: '0px 2px 4px rgba(0,0,0,0.8)',
+                  fontWeight: '900',
+                  lineHeight: '1.2'
+                }}
+              >
+                {activeSubtitleClip.source.text}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -79,11 +204,11 @@ export function PreviewPanel({ resolution = { width: 1920, height: 1080 } }: Pre
           >
             <div
               className="h-full rounded-full bg-primary transition-all"
-              style={{ width: '0%' }}
+              style={{ width: `${Math.min(100, (currentTime / totalDuration) * 100)}%` }}
             />
             <div
               className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ left: '0%' }}
+              style={{ left: `${Math.min(100, (currentTime / totalDuration) * 100)}%` }}
             />
           </div>
         </div>
@@ -92,7 +217,7 @@ export function PreviewPanel({ resolution = { width: 1920, height: 1080 } }: Pre
         <div className="flex items-center justify-between px-3 py-2">
           {/* Timecode */}
           <span className="font-mono text-[11px] text-theme-muted tabular-nums w-32">
-            00:00:00.00 / 00:00:00.00
+            {formatTimecode(currentTime)} / {formatTimecode(totalDuration)}
           </span>
 
           {/* Playback Buttons */}

@@ -76,7 +76,7 @@ function ThemeToggleButton() {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator' | 'pexels' | 'extract-audio' | 'video-editor'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'video-editor' | 'dashboard' | 'profiles' | 'image-generator' | 'pexels' | 'extract-audio' | 'settings' | 'test-11labs' | 'google-tts'>('video-editor');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
@@ -86,8 +86,12 @@ export default function App() {
   const projectServiceRef = useRef<ProjectService>(new ProjectService());
   const pipelineExecutorRef = useRef<PipelineExecutor | null>(null);
 
-  // Pipeline Kanban state
+  // Settings Modal State
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
+  // Kanban Board state
   const [projects, setProjects] = useState<VideoProject[]>([]);
+
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [isStageModalOpen, setIsStageModalOpen] = useState(false);
   const [stageModalMode, setStageModalMode] = useState<'auto' | 'manual'>('auto');
@@ -670,7 +674,8 @@ export default function App() {
               let duration = concatenatedDuration;
               try {
                 const audioCtx = new AudioContext();
-                const audioBuffer = await audioCtx.decodeAudioData(uint8.buffer.slice(0));
+                const audioBuffer = await audioCtx.decodeAudioData(uint8.buffer.slice(0) as ArrayBuffer);
+
                 duration = audioBuffer.duration;
                 await audioCtx.close();
               } catch (e) {
@@ -785,66 +790,40 @@ export default function App() {
           <div className="flex items-center gap-5">
             {/* LOGO */}
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20">
                 <Activity className="text-white w-5 h-5" strokeWidth={2.5} />
               </div>
-              <span className="font-semibold tracking-tight text-lg text-theme-primary">
-                Dark Factory <span className="text-sm text-primary/70 ml-1">v2.1</span>
-              </span>
+              <div className="flex flex-col">
+                <span className="font-bold tracking-tight text-lg text-theme-primary leading-none">
+                  Dark Factory
+                </span>
+                <span className="text-[10px] text-primary font-medium tracking-[0.2em] uppercase mt-0.5">
+                   Video Lab
+                </span>
+              </div>
             </div>
 
-            <div className="h-6 w-px border-theme" style={{ backgroundColor: 'var(--df-border)' }} />
+            <div className="h-6 w-px border-theme opacity-30" style={{ backgroundColor: 'var(--df-border)' }} />
 
-            {/* SYSTEM STATUS */}
-            <div className="flex items-center gap-3 text-base">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-primary status-pulse" />
-                <span className="text-primary font-medium">Online</span>
-              </div>
-              <span className="text-theme-placeholder text-sm">{uptime}</span>
-            </div>
-
-            <div className="h-6 w-px" style={{ backgroundColor: 'var(--df-border)' }} />
-
-            {/* METRICS */}
-            <div className="hidden lg:flex items-center gap-5 text-sm text-theme-muted">
-              <div className="flex items-center gap-2">
-                <span className="text-[#3B82F6] text-sm font-medium">CPU</span>
-                <div className="w-20 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--df-border)' }}>
-                  <div className="h-full bg-[#3B82F6] rounded-full transition-all" style={{ width: `${metrics.cpuUsage}%` }} />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[#8B5CF6] text-sm font-medium">GPU</span>
-                <div className="w-20 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--df-border)' }}>
-                  <div className="h-full bg-[#8B5CF6] rounded-full transition-all" style={{ width: `${metrics.gpuUsage}%` }} />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[#F59E0B] text-sm font-medium">RAM</span>
-                <div className="w-20 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--df-border)' }}>
-                  <div className="h-full bg-[#F59E0B] rounded-full transition-all" style={{ width: `${metrics.ramUsage}%` }} />
-                </div>
-              </div>
+            {/* PROJECT NAME */}
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                placeholder="Projeto sem nome"
+                className="bg-transparent border-none focus:ring-0 text-sm font-semibold text-theme-primary w-48 hover:bg-theme-hover px-3 py-1.5 rounded-lg transition-colors"
+                value={selectedProfileId ? profiles.find(p => p.id === selectedProfileId)?.name || '' : 'Projeto Padrão'}
+                onChange={() => {}} // TODO: Implement rename logic later
+              />
             </div>
           </div>
 
           {/* RIGHT SIDE */}
-          <div className="flex items-center gap-4 text-base text-theme-muted">
-            <div className="hidden md:flex items-center gap-2">
-              <HardDrive size={16} />
-              <span>Nós: {metrics.activeContainers}</span>
-            </div>
-            <div className="hidden md:flex items-center gap-2">
-              <Thermometer size={16} />
-              <span>{metrics.temperature}°C</span>
-            </div>
+          <div className="flex items-center gap-4">
             <ThemeToggleButton />
             <button
-              onClick={() => setActiveTab('settings')}
-              className="p-2.5 rounded-xl transition-colors text-theme-muted hover:text-theme-primary" style={{ ['--tw-bg-opacity' as any]: 1 }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--df-bg-hover)'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              onClick={() => setIsSettingsModalOpen(true)}
+              className="p-2.5 rounded-xl transition-colors text-theme-muted hover:text-theme-primary hover:bg-theme-hover"
+              title="Configurações Engine"
             >
               <Settings size={20} />
             </button>
@@ -854,49 +833,48 @@ export default function App() {
         {/* ========== MAIN CONTAINER ========== */}
         <div className="flex flex-1 overflow-hidden">
 
-          {/* ========== SIDEBAR (FIXED) ========== */}
-          <aside className="w-64 border-r flex flex-col shrink-0 z-50 border-theme" style={{ backgroundColor: 'var(--df-bg-secondary)' }}>
-            <nav className="flex-1 py-5 flex flex-col gap-1.5 px-4">
+          {/* ========== SIDEBAR (MINIMAL) ========== */}
+          <aside className="w-20 border-r flex flex-col shrink-0 z-50 border-theme transition-all duration-300" style={{ backgroundColor: 'var(--df-bg-secondary)' }}>
+            <nav className="flex-1 py-8 flex flex-col gap-4 px-2">
               {[
-                { id: 'pipeline', icon: LayoutGrid, label: 'Pipeline' },
-                { id: 'video-editor', icon: MonitorPlay, label: 'Editor Visual' },
-                { id: 'dashboard', icon: Activity, label: 'Dashboard' },
-                { id: 'profiles', icon: Layers, label: 'Perfis' },
-                { id: 'image-generator', icon: Image, label: 'Gerador de Imagens' },
-                { id: 'pexels', icon: Search, label: 'Pexels Hub' },
-                { id: 'extract-audio', icon: Mic, label: 'Extrair Audio' },
-                { id: 'settings', icon: Settings, label: 'Configuração' },
-                { id: 'test-11labs', icon: Mic, label: 'Teste 11 Labs' },
-                { id: 'google-tts', icon: Mic, label: 'Google TTS' },
+                { id: 'video-editor', icon: MonitorPlay, label: 'Editor' },
+                { id: 'profiles', icon: Layers, label: 'Canais' },
+                { id: 'image-generator', icon: Image, label: 'Imagens' },
+                { id: 'dashboard', icon: Activity, label: 'Status' },
+                { id: 'pipeline', icon: LayoutGrid, label: 'Legado' },
               ].map((item) => (
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id as typeof activeTab)}
-                  className={`w-full h-12 flex items-center gap-3 px-4 rounded-xl transition-all duration-200 ${activeTab === item.id
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-theme-muted hover:text-theme-primary'
+                  title={item.label}
+                  className={`relative w-full aspect-square flex flex-col items-center justify-center gap-1.5 rounded-2xl transition-all duration-200 group
+                    ${activeTab === item.id 
+                      ? 'bg-primary/10 text-primary' 
+                      : 'text-theme-muted hover:text-theme-primary hover:bg-theme-hover'
                     }`}
-                  style={activeTab !== item.id ? {} : undefined}
-                  onMouseEnter={(e) => { if (activeTab !== item.id) e.currentTarget.style.backgroundColor = 'var(--df-bg-hover)'; }}
-                  onMouseLeave={(e) => { if (activeTab !== item.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
                 >
-                  <item.icon size={20} className="shrink-0" />
-                  <span className="text-base font-medium">
+                  <item.icon size={22} className={`transition-transform duration-200 ${activeTab === item.id ? 'scale-110' : 'group-hover:scale-110'}`} />
+                  <span className="text-[10px] font-bold uppercase tracking-tighter opacity-70 group-hover:opacity-100">
                     {item.label}
                   </span>
+                  
+                  {/* Indicator Dot */}
+                  {activeTab === item.id && (
+                    <div className="absolute left-0 w-1 h-6 bg-primary rounded-r-full shadow-[2px_0_8px_rgba(var(--df-primary-rgb),0.5)]" />
+                  )}
                 </button>
               ))}
             </nav>
 
-            {/* BOTTOM ACTIONS */}
-            <div className="pb-5 flex flex-col gap-1.5 px-4">
+            <div className="pb-8 flex flex-col items-center px-2">
               <button
-                onClick={handleCreateProject}
-                className="w-full h-12 flex items-center gap-3 px-4 rounded-xl text-primary bg-primary/5 hover:bg-primary/10 transition-all font-medium text-base"
+                onClick={() => setIsSettingsModalOpen(true)}
+                title="Configurações Engine"
+                className="w-full aspect-square flex items-center justify-center rounded-2xl transition-all duration-200 hover:bg-theme-hover text-theme-muted hover:text-theme-primary"
               >
-                <Plus size={20} className="shrink-0" />
-                Novo Projeto
+                <Settings size={22} />
               </button>
+
             </div>
           </aside>
 
@@ -1068,7 +1046,11 @@ export default function App() {
                 onClose={() => setActiveTab('pipeline')}
               />
             ) : activeTab === 'video-editor' ? (
-              <VideoEditor />
+              <VideoEditor 
+                config={config} 
+                profiles={profiles}
+                activeProfileId={selectedProfileId || undefined}
+              />
             ) : activeTab === 'image-generator' ? (
               <ImageGeneratorPanel config={config} />
             ) : activeTab === 'pexels' ? (
@@ -1076,10 +1058,11 @@ export default function App() {
             ) : activeTab === 'extract-audio' ? (
               <ExtractAudioPanel config={config} />
             ) : (
-              <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-                <SettingsPanel config={config} onSave={setConfig} />
+              <div className="flex-1 flex items-center justify-center text-theme-muted">
+                <span className="text-sm font-medium">Selecione uma ferramenta na barra superior</span>
               </div>
             )}
+
           </main>
         </div>
 
@@ -1224,6 +1207,46 @@ export default function App() {
           project={errorProject}
           onResetStage={handleResetStage}
         />
+        {/* MODAL DE CONFIGURAÇÕES ENGINE */}
+        {isSettingsModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="bg-theme-secondary border border-theme w-full max-w-4xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col scale-in-center animate-in zoom-in-95 duration-200">
+              {/* Header */}
+              <div className="p-5 border-b border-theme flex items-center justify-between bg-theme-secondary">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-primary/10 rounded-xl text-primary">
+                    <Settings name="settings" size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-theme-primary">Configurações de Engine</h3>
+                    <p className="text-sm text-theme-muted">Ajuste APIs, caminhos locais e preferências globais.</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsSettingsModalOpen(false)}
+                  className="p-2 hover:bg-theme-hover rounded-xl text-theme-muted hover:text-theme-primary transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                <SettingsPanel config={config} onSave={setConfig} />
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-theme bg-theme-secondary flex justify-end">
+                <button
+                  onClick={() => setIsSettingsModalOpen(false)}
+                  className="px-6 py-2.5 bg-theme-primary border border-theme text-theme-primary text-sm font-bold rounded-xl hover:bg-theme-hover transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     </StatusModalProvider>
     </ThemeProvider>

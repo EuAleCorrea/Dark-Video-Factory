@@ -59,6 +59,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 };
 
 /**
+ * Generates SubRip (.srt) subtitle content.
+ */
+export const generateSrtContent = (segments: StoryboardSegment[]): string => {
+  let currentTime = 0;
+  
+  return segments.map((seg, index) => {
+    const start = formatSrtTimestamp(currentTime);
+    const end = formatSrtTimestamp(currentTime + seg.duration);
+    const text = seg.scriptText.trim();
+    
+    const block = `${index + 1}\n${start} --> ${end}\n${text}\n`;
+    currentTime += seg.duration;
+    return block;
+  }).join('\n');
+};
+
+const formatSrtTimestamp = (seconds: number): string => {
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const millis = Math.floor((seconds % 1) * 1000);
+
+  return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${millis.toString().padStart(3, '0')}`;
+};
+
+
+/**
  * Converts Hex (#RRGGBB) to ASS color format (&HBBGGRR)
  * ASS uses BGR order.
  */

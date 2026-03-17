@@ -1,6 +1,5 @@
 # Dark Video Factory — PRD (Product Requirements Document)
-
-> **Última atualização:** 2026-03-12 20:15
+> **Última atualização:** 2026-03-17 19:00 (Versão V1 Pronta)
 > **Consulta obrigatória:** Este documento deve ser lido no início de cada sessão antes de qualquer implementação.
 
 ---
@@ -34,36 +33,33 @@
 ```
 App.tsx (Componente raiz, orquestra tudo)
 ├── ThemeProvider (ThemeContext.tsx) — Gestão de Tema Dark/Light
-├── SettingsPanel.tsx — Config de API keys, providers, paths
-├── ProfileEditor.tsx — Criar/editar perfis de canal + prompts
+├── SettingsPanel.tsx — Config de API keys, providers, paths (Modal)
+├── EditorShell.tsx — Container Principal do Editor (View Padrão)
+│   ├── ProjectTabs.tsx — Gestão de múltiplos projetos abertos
+│   ├── WorkflowPanel.tsx — Pipeline Kanban integrado ao editor
+│   ├── MediaLibraryPanel.tsx — Painel de mídia (Arquivos/Pexels/IA)
+│   ├── AudioToolsPanel.tsx — Agrupador: Google TTS / ElevenLabs / Extrair Áudio
+│   ├── ImageToolsPanel.tsx — Agrupador: Geração de imagens / Galeria
+│   ├── PreviewPanel.tsx — Canvas 16:9 + Compositor real + Controles
+│   ├── PropertiesPanel.tsx — Propriedades de clips (seções colapsáveis)
+│   └── TimelinePanel.tsx — Timeline Engine: Tracks, Clips, Drag&Drop, Resize
+├── KanbanBoard.tsx — Pipeline Legado (para histórico)
+└── ProfileEditor.tsx — Criar/editar perfis de canal + prompts
 ├── Dashboard.tsx — Métricas e overview
 ├── VideoSelectorModal.tsx — Buscar e selecionar vídeos do YouTube
 ├── TranscriptApprovalModal.tsx — Aprovar transcrições em batch
 ├── StageActionModal.tsx — Modal de ações de estágio (auto/manual)
-├── KanbanBoard.tsx — Container do board Kanban
-│   └── KanbanColumn.tsx — Uma coluna por estágio
-│       └── ProjectCard.tsx — Card individual de projeto
 ├── StageDetailsModal.tsx — Visualização detalhada de dados do estágio (Referência/Roteiro)
 │   └── VideoPlayerModal.tsx — Player de vídeo embedado via YouTube iFrame
 ├── ErrorDetailModal.tsx — Visualização profunda de logs de erro + Reset de estágio
 ├── PromptDebugModal.tsx — Preview visual de prompts antes de enviar para IA (P1/P2)
 ├── BatchActionBar.tsx — Barra de ações em lote (processar, deletar)
-├── ImageGeneratorPanel.tsx — Interface de geração de imagens via RunWare (Flux.1 Schnell)
 ├── PreviewPlayer.tsx — Player de preview de vídeo
-├── Storyboard.tsx — Visualização de segmentos do storyboard (Suporta edição de visualPrompt)
 ├── JobQueue.tsx — Fila de jobs (sistema legado)
 ├── Terminal.tsx — Log de terminal
 ├── SystemHealth.tsx — Status do sistema
 ├── AssetBrowser.tsx — Navegador de assets
-├── DistributionPanel.tsx — Painel de distribuição
-├── ElevenLabsPanel.tsx — Interface dedicada para geração TTS via ElevenLabs (Clone Visual Studio 3.0)
-├── GoogleTTSPanel.tsx — Interface dedicada para geração TTS via Google Gemini
-└── editor/
-    ├── VideoEditor.tsx — Container do editor visual (4 painéis redimensionáveis)
-    ├── MediaLibraryPanel.tsx — Painel de mídia (esquerda): tabs Arquivos/Pexels/IA
-    ├── PreviewPanel.tsx — Preview central: canvas 16:9, controles de transporte
-    ├── PropertiesPanel.tsx — Propriedades (direita): seções colapsáveis
-    └── TimelinePanel.tsx — Timeline (baixo): tracks, régua, playhead, zoom
+└── DistributionPanel.tsx — Painel de distribuição
 ```
 
 ### 2.2 Fluxo de Dados

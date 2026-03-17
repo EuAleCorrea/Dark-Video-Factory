@@ -263,6 +263,52 @@ SAÍDA (JSON STRICT):
   return JSON.parse(raw);
 };
 
+// =============================================
+// P3 — PROMPTING (Geração de Prompts Visuais)
+// =============================================
+
+export const generateVisualPromptsForSegments = async (
+  segments: { id: number; scriptText: string }[],
+  visualStyle: string,
+  modelId: string,
+  provider: 'GEMINI' | 'OPENAI' | 'OPENROUTER',
+  config: EngineConfig
+): Promise<{ id: number; visualPrompt: string }[]> => {
+
+  console.log(`[Pipeline] P3 — Prompting via ${provider}/${modelId}...`);
+
+  const systemPrompt = `Você é um diretor de arte especializado em IA generativa (Midjourney/Flux).
+Sua tarefa é criar prompts visuais altamente descritivos em INGLÊS para cada segmento do roteiro.
+
+ESTILO VISUAL OBRIGATÓRIO: ${visualStyle}
+
+REGRAS PARA OS PROMPTS:
+1. Sempre em INGLÊS.
+2. Descreva a cena, iluminação, ângulo de câmera e detalhes do estilo.
+3. Não use o nome dos personagens se não forem famosos, descreva-os.
+4. Evite palavras proibidas (nudez, violência extrema).
+5. Mantenha consistência visual entre os segmentos.
+
+SAÍDA (JSON STRICT - ARRAY):
+[
+  { "id": 1, "visualPrompt": "A detailed prompt in English..." },
+  ...
+]`;
+
+  const userPrompt = `SEGMENTOS DO ROTEIRO:\n${JSON.stringify(segments, null, 2)}`;
+
+  const raw = await callLLMWithRetry(systemPrompt, userPrompt, modelId, provider, config);
+  
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : (parsed.prompts || parsed.segments || []);
+  } catch (e) {
+    console.error("Erro ao dar parse nos prompts visuais:", e);
+    return segments.map(s => ({ id: s.id, visualPrompt: `Cinematic visualization of: ${s.scriptText.substring(0, 50)}` }));
+  }
+};
+
+
 /**
  * 1. GERADOR DE ROTEIRO (ROUTING LOGIC)
  * Suporta: Gemini (Padrão), OpenAI (GPT-4o), OpenRouter (Claude/Llama)

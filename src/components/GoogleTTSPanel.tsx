@@ -52,7 +52,7 @@ interface GoogleTTSPanelProps {
     onClose: () => void;
 }
 
-const GOOGLE_VOICES = [
+export const GOOGLE_VOICES = [
     { id: 'Zephyr', label: 'Zephyr', description: 'Bright, energetic and modern', tags: ['conversational', 'male'] },
     { id: 'Kore', label: 'Kore', description: 'Energetic, youthful and confident', tags: ['news', 'female'] },
     { id: 'Puck', label: 'Puck', description: 'Upbeat, playful and youthful', tags: ['conversational', 'male'] },
