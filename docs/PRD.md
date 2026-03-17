@@ -684,6 +684,7 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-03-12 | **Sprint 0: Infraestrutura do Editor**: Criado `EditorPersistenceService`, tipos globais do editor (`Track`, `Clip`), e integração Supabase (`user_preferences`, `editor_projects`). |
 | 2026-03-12 | **Sprint 1: Sistema de Temas**: Implementado `ThemeContext` (Dark/Light mode) com persistência e migração de toda a UI para variáveis CSS (`--df-*`). |
 | 2026-03-15 | **Fase 2: Layout do Editor Visual (CapCut-like)**: Criados 5 componentes em `components/editor/`: `VideoEditor` (container com resize nativo), `MediaLibraryPanel` (tabs Arquivos/Pexels/IA), `PreviewPanel` (canvas 16:9 + controles de transporte), `PropertiesPanel` (seções colapsáveis), `TimelinePanel` (3 tracks + régua + playhead + zoom). Integrado como nova tab "Editor Visual" na sidebar. CSS editor classes (`.editor-panel`, `.editor-resize-handle`) tema-aware. |
+| 2026-03-17 | **Branch `feature/editor-fullstack`**: Criada branch de refactor para transformar o app em editor-centric (estilo CapCut). Roadmap com 34 micro-steps em 7 fases: (3) Header + Tab Bar horizontal, (4) Migração de features para tabs do editor, (5) Workflow/Pipeline integrado ao editor, (6) Timeline Engine funcional, (7) Preview Player real, (8) Multi-projeto, (9) Cleanup e remoção da sidebar. Branch base: `Desktop_Video_Factory`. Plano detalhado em `docs/EDITOR_PLAN.md`. |
 
 ## 14. Inteligência e Otimização
 
