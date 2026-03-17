@@ -636,6 +636,49 @@ input[type="number"] {
 }
 
 /* ========================================
+   EDITOR LAYOUT — Panels, Resize Handles, Timeline
+   ======================================== */
+
+.editor-panel {
+  background-color: var(--df-bg-secondary);
+  border: 1px solid var(--df-border);
+  border-radius: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Resize Handles */
+.editor-resize-handle {
+  background: transparent;
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.editor-resize-vertical {
+  width: 5px;
+  cursor: col-resize;
+}
+
+.editor-resize-horizontal {
+  height: 5px;
+  cursor: row-resize;
+}
+
+.editor-resize-handle:hover {
+  background-color: rgba(13, 148, 136, 0.2);
+}
+
+.editor-resize-handle:hover .editor-resize-indicator {
+  background-color: var(--color-primary) !important;
+}
+
+.editor-resize-handle:active {
+  background-color: rgba(13, 148, 136, 0.35);
+}
+
+/* ========================================
    REDUCED MOTION
    ======================================== */
 

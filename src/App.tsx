@@ -26,6 +26,7 @@ import { GoogleTTSPanel } from './components/GoogleTTSPanel';
 import { ImageGeneratorPanel } from './components/ImageGeneratorPanel';
 import { PexelsHub } from './components/PexelsHub';
 import { ExtractAudioPanel } from './components/ExtractAudioPanel';
+import { VideoEditor } from './components/editor/VideoEditor';
 import { searchChannelVideos, transcribeVideo } from './lib/youtubeMock';
 import { PersistenceService } from './services/PersistenceService';
 import { ProjectService } from './services/ProjectService';
@@ -75,7 +76,7 @@ function ThemeToggleButton() {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator' | 'pexels' | 'extract-audio'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'dashboard' | 'profiles' | 'settings' | 'test-11labs' | 'google-tts' | 'image-generator' | 'pexels' | 'extract-audio' | 'video-editor'>('pipeline');
   const [monitorTab, setMonitorTab] = useState<'terminal' | 'assets'>('terminal');
 
   const [config, setConfig] = useState<EngineConfig>(INITIAL_CONFIG);
@@ -858,6 +859,7 @@ export default function App() {
             <nav className="flex-1 py-5 flex flex-col gap-1.5 px-4">
               {[
                 { id: 'pipeline', icon: LayoutGrid, label: 'Pipeline' },
+                { id: 'video-editor', icon: MonitorPlay, label: 'Editor Visual' },
                 { id: 'dashboard', icon: Activity, label: 'Dashboard' },
                 { id: 'profiles', icon: Layers, label: 'Perfis' },
                 { id: 'image-generator', icon: Image, label: 'Gerador de Imagens' },
@@ -1065,6 +1067,8 @@ export default function App() {
                 config={config}
                 onClose={() => setActiveTab('pipeline')}
               />
+            ) : activeTab === 'video-editor' ? (
+              <VideoEditor />
             ) : activeTab === 'image-generator' ? (
               <ImageGeneratorPanel config={config} />
             ) : activeTab === 'pexels' ? (

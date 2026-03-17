@@ -57,7 +57,13 @@ App.tsx (Componente raiz, orquestra tudo)
 ├── AssetBrowser.tsx — Navegador de assets
 ├── DistributionPanel.tsx — Painel de distribuição
 ├── ElevenLabsPanel.tsx — Interface dedicada para geração TTS via ElevenLabs (Clone Visual Studio 3.0)
-└── GoogleTTSPanel.tsx — Interface dedicada para geração TTS via Google Gemini
+├── GoogleTTSPanel.tsx — Interface dedicada para geração TTS via Google Gemini
+└── editor/
+    ├── VideoEditor.tsx — Container do editor visual (4 painéis redimensionáveis)
+    ├── MediaLibraryPanel.tsx — Painel de mídia (esquerda): tabs Arquivos/Pexels/IA
+    ├── PreviewPanel.tsx — Preview central: canvas 16:9, controles de transporte
+    ├── PropertiesPanel.tsx — Propriedades (direita): seções colapsáveis
+    └── TimelinePanel.tsx — Timeline (baixo): tracks, régua, playhead, zoom
 ```
 
 ### 2.2 Fluxo de Dados
@@ -677,6 +683,7 @@ Armazena o estado completo de cada projeto para persistência em nuvem.
 | 2026-03-04 | **Storage Local em Disco**: Refatoração total para JSON-on-Disk (`data/`). Criados `DiskStorageService` e `MigrationService`. |
 | 2026-03-12 | **Sprint 0: Infraestrutura do Editor**: Criado `EditorPersistenceService`, tipos globais do editor (`Track`, `Clip`), e integração Supabase (`user_preferences`, `editor_projects`). |
 | 2026-03-12 | **Sprint 1: Sistema de Temas**: Implementado `ThemeContext` (Dark/Light mode) com persistência e migração de toda a UI para variáveis CSS (`--df-*`). |
+| 2026-03-15 | **Fase 2: Layout do Editor Visual (CapCut-like)**: Criados 5 componentes em `components/editor/`: `VideoEditor` (container com resize nativo), `MediaLibraryPanel` (tabs Arquivos/Pexels/IA), `PreviewPanel` (canvas 16:9 + controles de transporte), `PropertiesPanel` (seções colapsáveis), `TimelinePanel` (3 tracks + régua + playhead + zoom). Integrado como nova tab "Editor Visual" na sidebar. CSS editor classes (`.editor-panel`, `.editor-resize-handle`) tema-aware. |
 
 ## 14. Inteligência e Otimização
 
