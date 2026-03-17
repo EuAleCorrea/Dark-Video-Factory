@@ -2,69 +2,52 @@
 trigger: always_on
 ---
 
-# Dark Video Factory - Regras do Projeto
+# Dark Video Factory - Regras Master (V1.0)
 
-## 📦 Git
+## 📦 Git & Branching
 
 | Informação | Valor |
 |------------|-------|
 | **Remote** | `DarkVideoFactory` |
-| **Repositório** | `https://github.com/EuAleCorrea/Dark-Video-Factory.git` |
 | **Branch Oficial** | `Desktop_Video_Factory` |
-| **Tipo de App** | Tauri Desktop (não mais web/Next.js) |
+| **Commit Rule** | Mensagens de commit em inglês: `feat:`, `fix:`, `refactor:`. |
 
-### Push
-```powershell
-git push DarkVideoFactory Desktop_Video_Factory
-```
-
-## 🛠️ Stack
+## 🛠️ Stack Tecnológica
 
 | Camada | Tecnologia |
 |--------|------------|
-| Desktop Runtime | Tauri v2 |
-| Frontend | React + Vite |
-| Styling | Tailwind CSS v4 |
-| Backend Rust | src-tauri/ |
-| Database/Auth | Supabase (configuração dinâmica) |
-| AI | Google Gemini API |
+| Runtime | **Tauri v2** (Desktop Nativo) |
+| Frontend | **React 18 + Vite** |
+| Styling | **Tailwind CSS v4** + Variáveis CSS (`index.css`) |
+| Backend | Rust (para comandos nativos e renderização) |
+| State | `EditorShell` Context + Hooks Customizados |
+| Storage | Local Disk (`PROJECT_DIR/data/`) + Supabase Sync |
 
-## 🚀 Comandos
+## 🚀 Comandos de Operação
 
-| Ação | Comando |
-|------|---------|
-| Dev | `npx tauri dev` |
-| Build | `npx tauri build` |
-| Vite only | `npm run dev` |
-| Type check | `npx tsc --noEmit` |
+- **Dev Mode**: `npx tauri dev`
+- **Build**: `npx tauri build`
+- **Lint/Check**: `npx tsc --noEmit`
 
-## ⚠️ Regras Importantes
+## ⚠️ Regras Cruciais (Seguimento Obrigatório)
 
-1. **SEM `process.env`** — Todas as configs são dinâmicas via Settings UI
-2. **Supabase dinâmico** — Usar `configureSupabase(url, key)` de `@/lib/supabase`
-3. **Guard no Supabase** — Sempre usar `isSupabaseConfigured()` antes de chamar Supabase
-4. **`.gitignore`** — `src-tauri/target/` nunca deve ser commitado
-5. **Restart Automático** — Sempre que uma implementação for aplicada, matar todos os processos abertos do app (`dark-video-tauri`, `*Dark Video Factory*`) e subir o novo (`npx tauri dev`) imediatamente, sem necessidade de monitorar o processo no terminal. Faça e solte a aplicação.
-6. **Tema e CSS** — NUNCA usar cores hardcoded (ex: `bg-white`, `text-black`). Usar variáveis de tema do `index.css` (ex: `bg-theme-primary`, `text-theme-primary`, `border-theme`).
-7. **Persistência do Editor** — Usar `EditorPersistenceService` para carregar/salvar preferências e projetos do editor visual.
-8. **Dark Mode** — Todo novo componente deve ser testado em Dark e Light mode. Usar o `useTheme()` para lógica condicional se necessário.
+1.  **NO SIDEBAR**: A sidebar lateral antiga foi removida. Toda navegação ocorre no **Header** e no **EditorTabBar**. Novo componente deve ser integrado a uma das abas do editor ou em painéis laterais.
+2.  **EDITOR-CENTRIC**: O `EditorShell` é a view principal. Qualquer modificação no fluxo de trabalho deve respeitar a estrutura de clips, tracks e playhead.
+3.  **STYLING SEM HARDCODE**: Proibido `bg-white`, `text-slate-900`, etc. Use **SEMPRE** `bg-theme-primary`, `text-theme-primary`, `border-theme`.
+4.  **RESTART AUTOMÁTICO**: Ao aplicar mudanças no código, mate os processos (`dark-video-tauri`) e reinicie o servidor imediatamente via `npx tauri dev`.
+5.  **PERSISTÊNCIA HÍBRIDA**: Use `EditorPersistenceService` para qualquer dado que precise ser salvo. Ele gerencia o salvamento local em disco e o sync com Supabase.
+6.  **UNDO/REDO (CTRL+Z)**: Qualquer mudança no estado do projeto dentro do editor DEVE ser disparada via `handleProjectUpdate` para garantir o histórico de desfazer/refazer.
+7.  **MULTI-PROJECT**: O app suporta abas de projeto. Use o `activeProjectId` para garantir que as operações afetem o projeto correto.
 
-## 📋 PRD — Documentação Técnica Obrigatória
+## 📋 Documentação Obrigatória (Consultar antes de codar)
 
-> 🔴 **REGRA OBRIGATÓRIA:** Antes de QUALQUER implementação, leia `docs/PRD.md`.
-> Este documento contém a arquitetura completa, pipeline, serviços, tipos, APIs e regras de negócio.
-> **NÃO pesquise o código do zero** — consulte o PRD primeiro para entender a estrutura existente.
-> Após implementações significativas, **atualize o PRD** com as mudanças feitas.
+-   **PRD Central**: `docs/PRD.md` (Contém a especificação técnica de cada módulo).
+-   **Roadmap Final**: `docs/EDITOR_PLAN.md` (Histórico das fases concluídas).
+-   **User Guide**: `docs/USER_GUIDE.md` (Para entender o fluxo de uso da V1).
 
-- **Caminho:** `docs/PRD.md`
-- **Conteúdo:** Arquitetura, Pipeline Kanban (10 estágios), Serviços, Tipos, APIs externas, Storage map, Regras de negócio
-- **Quando consultar:** Sempre, antes de qualquer código novo
-- **Quando atualizar:** Após adicionar novos componentes, serviços, estágios ou regras
+## 📂 Pastas Críticas
 
-## 📂 Caminhos de Referência
-
-| Recurso | Caminho |
-|---------|---------|
-| **CapCut Drafts** | `C:\Users\aless\OneDrive\Área de Trabalho\Canais Dark\Rascunhos\CapCut Drafts` |
-| **Áudios TTS (CapCut)** | `{CapCut Drafts}\{pasta}\textReading\` (arquivos .wav individuais) |
-| **Áudio Composto (CapCut)** | `{CapCut Drafts}\{pasta}\Resources\combination\` (arquivos .aac) |
+-   `/src/components/editor/`: Componentes da nova interface visual.
+-   `/src/services/`: Toda a lógica pesada (IA, Render, Persistence, Engine).
+-   `/src-tauri/`: Backend Rust (comandos de disco e FFmpeg).
+-   `/data/`: (Criada em runtime) Onde os projetos reais são salvos (.json).
