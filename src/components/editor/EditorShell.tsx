@@ -12,6 +12,7 @@ import { ImageToolsPanel } from './ImageToolsPanel';
 import { TextToolsPanel } from './TextToolsPanel';
 import { WorkflowPanel } from './WorkflowPanel';
 import { EffectsToolsPanel } from './EffectsToolsPanel';
+import { RemotionTestPanel } from './RemotionTestPanel';
 import { ProjectTabs } from './ProjectTabs';
 import { EditorPersistenceService } from '../../services/EditorPersistenceService';
 import { Save, FolderOpen, MousePointer2 } from 'lucide-react';
@@ -291,16 +292,33 @@ export function EditorShell({ config, profiles, activeProfileId }: EditorShellPr
 
 
       case 'audio':
-        return <AudioToolsPanel config={config} />;
+        return (
+          <AudioToolsPanel
+            config={config}
+            project={activeProject}
+            persistence={persistence}
+            onProjectUpdate={(p) => handleProjectUpdate(p)}
+            onSwitchToMedia={() => setActiveEditorTab('media')}
+          />
+        );
       case 'images':
         return <ImageToolsPanel config={config} />;
       case 'text':
         return <TextToolsPanel project={dummyVideoProject as any} config={config} />;
       case 'effects':
         return <EffectsToolsPanel />;
+      case 'remotion':
+        return <RemotionTestPanel config={config} />;
       case 'media':
       default:
-        return <MediaLibraryPanel config={config} />;
+        return (
+          <MediaLibraryPanel 
+            config={config} 
+            project={activeProject}
+            persistence={persistence}
+            onProjectUpdate={handleProjectUpdate}
+          />
+        );
     }
   };
 

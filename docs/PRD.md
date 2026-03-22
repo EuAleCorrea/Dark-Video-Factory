@@ -18,9 +18,9 @@
 | Frontend | **React 18 + Vite** |
 | Styling | **Tailwind CSS v4** |
 | State | **React State/Context** (EditorShell como orquestrador) |
+| Renderização | **Remotion** (React-based Video Engine) |
+| Timeline Engine | **Híbrido**: TS Control + **Remotion Composition** |
 | Storage | **Híbrido**: Disco Local (JSON-on-Disk) + Supabase Sync |
-| Timeline Engine | **Custom TypeScript Service** (Lógica de tracks, clips e snapping) |
-| Renderização | **FFmpeg Nativo** (Tauri Sidebar Invoke) |
 | IA de Voz | **Google Gemini TTS (flash-preview)** + **ElevenLabs** |
 | IA de Imagem | **RunWare (Flux.1)** + **Together.ai** + **Gemini Imagen** |
 | IA de Roteiro | **Gemini 2.0 Flash/Pro**, OpenAI, OpenRouter |
@@ -55,7 +55,7 @@ O antigo Kanban foi integrado diretamente no editor via aba **"Workflow"**. O pi
 3.  **Áudio**: Geração de narração (Gemini ou ElevenLabs) com inserção automática na track de áudio.
 4.  **Legendas**: Geração de storyboard (9-18s) + legendas ASS com inserção na track de texto.
 5.  **Imagens**: Geração em lote para cada cena do storyboard com inserção na track de vídeo.
-6.  **Exportação**: Renderização final via FFmpeg em formato Vertical (9:16) ou Horizontal (16:9).
+6.  **Exportação**: Renderização final via **Remotion** (MP4/WebM) com suporte a Ken Burns, transições e legendas animadas nativas.
 
 ---
 
@@ -77,9 +77,9 @@ O antigo Kanban foi integrado diretamente no editor via aba **"Workflow"**. O pi
 
 | Serviço | Responsabilidade |
 |---------|-----------------|
-| `TimelineEngineService` | CRUD de clips, cálculo de tempos, snapping e splits. |
+| `TimelineEngineService` | CRUD de clips e sincronização com Props do Remotion. |
 | `EditorPersistenceService` | Interface de I/O para projetos e preferências (Disco + Cloud). |
-| `VideoRenderService` | Preparação de manifest FFmpeg e disparo da renderização nativa. |
+| `VideoRenderService` | Orquestração do CLI do Remotion para geração de vídeo final. |
 | `PipelineExecutor` | Orquestração IA (Transcrição → Roteiro → Assets). |
 | `geminiService` | Ponte para modelos Google (LLM + TTS + Imagen). |
 | `imageProviders` | Strategy pattern para RunWare, Together e Gemini. |

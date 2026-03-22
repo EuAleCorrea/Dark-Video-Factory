@@ -63,6 +63,9 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
   // Selected state
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
 
+  // Drag over state for visual feedback
+  const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null);
+
   // Context Menu state
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
 
@@ -73,7 +76,8 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
     return () => window.removeEventListener('click', handleClick);
   }, []);
 
-  const totalSeconds = 60; // placeholder
+  const maxClipEnd = TimelineEngineService.getTimelineDuration(tracks);
+  const totalSeconds = Math.max(600, maxClipEnd + 60); 
   const pixelsPerSecond = 30 * zoom;
   const totalWidth = totalSeconds * pixelsPerSecond;
 
@@ -311,7 +315,12 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
       </div>
 
       {/* Timeline Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div 
+        className="flex-1 flex overflow-hidden"
+        onDragOver={(e) => {
+          e.preventDefault();
+        }}
+      >
         {/* Track Headers (fixed left) */}
         <div
           className="w-40 shrink-0 border-r border-theme overflow-y-auto custom-scrollbar"
@@ -356,6 +365,13 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
           className="flex-1 overflow-auto custom-scrollbar relative"
           style={{ backgroundColor: 'var(--df-bg-primary)' }}
           onClick={() => setSelectedClipId(null)}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+          }}
         >
           {/* Ruler */}
           <div
@@ -383,7 +399,13 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
           </div>
 
           {/* Track Lanes */}
-          <div style={{ width: `${totalWidth}px`, minWidth: '100%' }}>
+          <div 
+            style={{ width: `${totalWidth}px`, minWidth: '100%' }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
             {tracks.map((track) => {
               const color = TRACK_COLOR[track.type];
 
@@ -391,13 +413,15 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
                 <div
                   key={track.id}
                   className="h-12 border-b border-theme relative"
-                  style={{ opacity: track.visible ? 1 : 0.4 }}
                   onDragOver={(e) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'copy';
+                    setDragOverTrackId(track.id);
                   }}
+                  onDragLeave={() => setDragOverTrackId(null)}
                   onDrop={(e) => {
                     e.preventDefault();
+                    setDragOverTrackId(null);
                     try {
                       const dataStr = e.dataTransfer.getData('application/json');
                       if (!dataStr) return;
@@ -411,12 +435,44 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
                           dropTime = TimelineEngineService.snapToGrid(tracks, dropTime, 0.5);
                         }
 
+                        // Validate track compatibility
+                        const isCompatible = (track.type === 'video' && (data.item.type === 'video' || data.item.type === 'image')) ||
+                                           (track.type === 'audio' && data.item.type === 'audio') ||
+                                           (track.type === 'subtitle' && data.item.type === 'subtitle');
+                        
+                        // If not compatible, try to find a compatible track
+                        let targetTrackId = track.id;
+                        if (!isCompatible) {
+                           const altTrack = tracks.find(t => 
+                            (t.type === 'video' && (data.item.type === 'video' || data.item.type === 'image')) ||
+                            (t.type === 'audio' && data.item.type === 'audio') ||
+                            (t.type === 'subtitle' && data.item.type === 'subtitle')
+                           );
+                           if (altTrack) {
+                             targetTrackId = altTrack.id;
+                           } else {
+                             console.warn("Nenhuma track compatível encontrada para:", data.item.type);
+                             return;
+                           }
+                        }
+
+                        // Prepare source object
+                        let source: any = {
+                          type: data.item.type,
+                          url: data.item.src || '',
+                          path: data.item.src || ''
+                        };
+
+                        if (data.item.type === 'subtitle') {
+                          source = {
+                            type: 'subtitle',
+                            text: data.item.name || 'Nova Legenda',
+                          };
+                        }
+
                         const newClip = createClip(
-                          track.id,
-                          {
-                            type: data.item.type as any,
-                            url: data.item.src || '',
-                          },
+                          targetTrackId,
+                          source,
                           Math.max(0, dropTime),
                           data.item.duration || 5
                         );
@@ -427,6 +483,11 @@ export function TimelinePanel({ tracks = DEFAULT_TRACKS, onUpdateTracks, current
                     } catch (err) {
                       console.error("Failed to parse drop data", err);
                     }
+                  }}
+                  style={{ 
+                    opacity: track.visible ? 1 : 0.4,
+                    backgroundColor: dragOverTrackId === track.id ? `${color}15` : 'transparent',
+                    transition: 'background-color 0.1s ease'
                   }}
                 >
                   {/* Empty Track Pattern */}

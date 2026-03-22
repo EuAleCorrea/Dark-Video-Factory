@@ -308,7 +308,7 @@ Criação do layout 4 painéis redimensionáveis (MediaLibrary, Preview, Propert
 
 ---
 
-## 🔴 FASE 7 — Preview Player Funcional
+## ✅ FASE 7 — Preview Player Funcional (CONCLUÍDA)
 
 **Meta**: Preview mostra composição real (imagem + legenda no tempo correto).
 
@@ -414,38 +414,33 @@ Criação do layout 4 painéis redimensionáveis (MediaLibrary, Preview, Propert
 
 ---
 
-## Resumo de Fases
+## ✅ FASE 10 — Motor de Renderização Remotion (EM PROGRESSO — TESTE OK)
 
-| Fase | Nome | Steps | Depende de |
-|------|------|-------|-----------|
-| ✅ 0 | Infraestrutura do Editor | — | — |
-| ✅ 1 | Sistema de Temas | — | — |
-| ✅ 2 | Layout do Editor | 4 | — |
-| ✅ 3 | Header e Tab Bar | 5 | Fase 2 |
-| ✅ 4 | Migração de Features | 6 | Fase 3 |
-| ✅ 5 | Workflow (Pipeline no Editor) | 7 | Fase 3 |
-| ✅ 6 | Timeline Engine | 5 | Fase 2 |
-| ✅ 7 | Preview Funcional | 2 | Fase 6 |
-| ✅ 8 | Multi-Projeto | 2 | Fase 3 |
-| ✅ 9 | Cleanup Final | 3 | Fases 4-8 |
+**Meta**: Substituir a renderização linear FFmpeg por composições dinâmicas React via Remotion.
 
-**Total: 34 micro-steps pendentes**
+### ✅ 10.1 — Prova de Conceito (Isolated Test)
+- [x] Criação do subprojeto `remotion/`.
+- [x] Configuração do Zod (4.3.6) e `registerRoot()`.
+- [x] Painel de teste funcional integrado ao Editor.
+- [x] Renderização via Tauri Invoke (`run_remotion_render`).
 
-### Ordem de execução recomendada
+### 🔲 10.2 — Composição Dinâmica Remotion
+- [ ] Mapear o estado da Timeline do editor para o formato JSON esperado pelo Remotion.
+- [ ] Suporte a múltiplos tipos de clips (Static Image, Video, Dynamic Text).
+- [ ] Implementar sistema de transições configuráveis entre clips.
 
-```
-Fase 3 (3.1→3.2→3.3→3.4→3.5)      ← Primeiro: nova navegação
-  ↓
-Fase 4 (4.1→4.2→4.3→4.4→4.5→4.6)  ← Migra features
-Fase 5 (5.1→5.2→5.3→5.4→5.5→5.6→5.7) ← Pipeline no editor
-  ↓ (podem rodar em paralelo ↕)
-Fase 6 (6.1→6.2→6.3→6.4→6.5)      ← Timeline funcional
-  ↓
-Fase 7 (7.1→7.2)                    ← Preview real
-Fase 8 (8.1→8.2)                    ← Multi-projeto
-  ↓
-Fase 9 (9.1→9.2→9.3)                ← Limpeza
-```
+### 🔲 10.3 — Preview em Tempo Real (Opcional)
+- [ ] Explorar uso do `@remotion/player` para preview instantâneo no `PreviewPanel.tsx`, eliminando a necessidade de re-renderização manual para visualização.
 
-> [!IMPORTANT]
-> **Fases 4, 5 e 6 podem ser desenvolvidas em paralelo** por agentes diferentes, desde que a Fase 3 esteja concluída. A Fase 6 não depende da 4 ou 5.
+### 🔲 10.4 — Refatorar ExportStep para Remotion
+- [ ] Migrar lógica do `ExportStep.tsx` para usar o novo motor de renderização.
+
+---
+
+## Resumo de Fases Atualizado
+
+| Fase | Nome | Status |
+|------|------|--------|
+| ✅ 0—9 | Infra, Layout, Engine, Workflow | CONCLUÍDO |
+| [/] 10 | Motor Remotion | **EM PROGRESSO** |
+

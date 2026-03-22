@@ -5,10 +5,11 @@ import {
   Music, 
   Type, 
   Image as ImageIcon, 
-  Sparkles 
+  Sparkles,
+  Film 
 } from 'lucide-react';
 
-export type EditorTabItem = 'workflow' | 'media' | 'audio' | 'text' | 'images' | 'effects';
+export type EditorTabItem = 'workflow' | 'media' | 'audio' | 'text' | 'images' | 'effects' | 'remotion';
 
 interface EditorTabBarProps {
   activeTab: EditorTabItem;
@@ -22,6 +23,7 @@ const TABS: { id: EditorTabItem; label: string; icon: any }[] = [
   { id: 'text', label: 'Texto', icon: Type },
   { id: 'images', label: 'Imagens', icon: ImageIcon },
   { id: 'effects', label: 'Efeitos', icon: Sparkles },
+  { id: 'remotion', label: 'Remotion', icon: Film },
 ];
 
 export const EditorTabBar: React.FC<EditorTabBarProps> = ({ activeTab, onTabChange }) => {

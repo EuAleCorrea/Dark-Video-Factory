@@ -52,3 +52,10 @@ src-tauri/target/
 
 # App data (disk storage — projects, config, audio)
 data/
+
+# Remotion Test
+remotion/node_modules/
+remotion/public/images/*
+!remotion/public/images/placeholder.jpg
+remotion/public/audio/*
+remotion/render-props.json

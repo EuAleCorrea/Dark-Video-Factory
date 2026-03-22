@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { EditorProject } from '../../types/editor';
 import { TimelineEngineService } from '../../services/TimelineEngineService';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 interface PreviewPanelProps {
   resolution?: { width: number; height: number };
@@ -20,6 +21,8 @@ export function PreviewPanel({
   onTimeChange
 }: PreviewPanelProps) {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolume] = useState(0.75);
+  const [isMuted, setIsMuted] = useState(false);
   const aspectRatio = resolution.width / resolution.height;
   const isPortrait = aspectRatio < 1;
 
@@ -40,43 +43,110 @@ export function PreviewPanel({
     .find(c => currentTime >= c.startTime && currentTime < c.startTime + c.duration);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const requestRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
 
-  const animate = useCallback((time: number) => {
-    if (lastTimeRef.current !== 0 && onTimeChange) {
-      const deltaTime = (time - lastTimeRef.current) / 1000;
-      onTimeChange(prev => {
-        const nextTime = prev + deltaTime;
-        if (nextTime >= totalDuration) {
-          setIsPlaying(false);
-          return 0; // Rewinds to start or handle end
-        }
-        return nextTime;
-      });
-    }
-    lastTimeRef.current = time;
-    if (isPlaying) {
-      requestRef.current = requestAnimationFrame(animate);
-    }
-  }, [onTimeChange, totalDuration, isPlaying]);
+  // --- Playback Engine ---
+  // Strategy: When playing, the VIDEO element is the clock source.
+  // The animation loop reads videoRef.currentTime and pushes it to the timeline.
+  // This avoids constant seeking which causes stutter.
+  // When paused, the timeline drives the video (for scrubbing).
 
+  const isPlayingRef = useRef(false);
+
+  const animate = useCallback(() => {
+    if (!isPlayingRef.current || !onTimeChange) return;
+
+    // If we have a video, use its time as the source of truth
+    if (videoRef.current && activeVideoClip && activeVideoClip.source.type === 'video') {
+      const videoCurrentTime = videoRef.current.currentTime;
+      const timelineTime = activeVideoClip.startTime + videoCurrentTime - (activeVideoClip.sourceStart || 0);
+
+      if (timelineTime >= totalDuration) {
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+        onTimeChange(() => 0);
+        return;
+      }
+      onTimeChange(() => timelineTime);
+    } else {
+      // No video — use performance.now delta (for audio-only or image clips)
+      if (lastTimeRef.current !== 0) {
+        const now = performance.now();
+        const deltaTime = (now - lastTimeRef.current) / 1000;
+        lastTimeRef.current = now;
+        onTimeChange(prev => {
+          const nextTime = prev + deltaTime;
+          if (nextTime >= totalDuration) {
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            return 0;
+          }
+          return nextTime;
+        });
+      } else {
+        lastTimeRef.current = performance.now();
+      }
+    }
+
+    requestRef.current = requestAnimationFrame(animate);
+  }, [onTimeChange, totalDuration, activeVideoClip]);
+
+  // Sync volume to media elements
   useEffect(() => {
-    if (isPlaying) {
-      lastTimeRef.current = performance.now();
-      requestRef.current = requestAnimationFrame(animate);
+    const effectiveVolume = isMuted ? 0 : volume;
+    if (videoRef.current) videoRef.current.volume = effectiveVolume;
+    if (audioRef.current) audioRef.current.volume = effectiveVolume;
+  }, [volume, isMuted]);
+
+  // Handle play/pause toggle — called directly from user click
+  const togglePlayback = useCallback(() => {
+    const newIsPlaying = !isPlaying;
+    setIsPlaying(newIsPlaying);
+    isPlayingRef.current = newIsPlaying;
+
+    if (newIsPlaying) {
+      lastTimeRef.current = 0;
+
+      // Seek video to correct position before playing
+      if (videoRef.current && activeVideoClip && activeVideoClip.source.type === 'video') {
+        const videoTime = currentTime - activeVideoClip.startTime + (activeVideoClip.sourceStart || 0);
+        videoRef.current.currentTime = Math.max(0, videoTime);
+        videoRef.current.volume = isMuted ? 0 : volume;
+        videoRef.current.play().catch(console.error);
+      }
       if (audioRef.current) {
+        audioRef.current.volume = isMuted ? 0 : volume;
         audioRef.current.play().catch(console.error);
       }
+
+      // Start animation loop
+      requestRef.current = requestAnimationFrame(animate);
     } else {
       cancelAnimationFrame(requestRef.current);
       lastTimeRef.current = 0;
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
+      if (videoRef.current) videoRef.current.pause();
+      if (audioRef.current) audioRef.current.pause();
+    }
+  }, [isPlaying, animate, volume, isMuted, currentTime, activeVideoClip]);
+
+  // Keep animation loop alive when deps change during playback
+  useEffect(() => {
+    if (isPlaying) {
+      cancelAnimationFrame(requestRef.current);
+      requestRef.current = requestAnimationFrame(animate);
     }
     return () => cancelAnimationFrame(requestRef.current);
   }, [isPlaying, animate]);
+
+  // Sync video time when scrubbing (paused only)
+  useEffect(() => {
+    if (!isPlaying && activeVideoClip && videoRef.current && activeVideoClip.source.type === 'video') {
+      const videoTime = currentTime - activeVideoClip.startTime + (activeVideoClip.sourceStart || 0);
+      videoRef.current.currentTime = Math.max(0, videoTime);
+    }
+  }, [currentTime, activeVideoClip, isPlaying]);
 
   // Sincroniza o audio time com o currentTime do projeto
   useEffect(() => {
@@ -148,9 +218,16 @@ export function PreviewPanel({
           </div>
 
           {/* Main Visual Asset (Video/Image) */}
-          {activeVideoClip?.source && (activeVideoClip.source.type === 'video' || activeVideoClip.source.type === 'image') && activeVideoClip.source.url ? (
+          {activeVideoClip?.source && activeVideoClip.source.type === 'video' && (activeVideoClip.source.url || activeVideoClip.source.path) ? (
+            <video
+              ref={videoRef}
+              src={convertFileSrc(activeVideoClip.source.path || activeVideoClip.source.url || '')}
+              className="absolute inset-0 w-full h-full object-contain"
+              playsInline
+            />
+          ) : activeVideoClip?.source && activeVideoClip.source.type === 'image' && (activeVideoClip.source.url || activeVideoClip.source.path) ? (
             <img 
-              src={activeVideoClip.source.url} 
+              src={convertFileSrc(activeVideoClip.source.path || activeVideoClip.source.url || '')} 
               alt="Scene preview" 
               className="absolute inset-0 w-full h-full object-contain"
             />
@@ -163,10 +240,10 @@ export function PreviewPanel({
           )}
 
           {/* Audio Element Hidden */}
-          {activeAudioClip?.source.type === 'audio' && activeAudioClip.source.url && (
+          {activeAudioClip?.source.type === 'audio' && (activeAudioClip.source.url || activeAudioClip.source.path) && (
             <audio 
               ref={audioRef}
-              src={activeAudioClip.source.url} 
+              src={convertFileSrc(activeAudioClip.source.path || activeAudioClip.source.url || '')} 
               className="hidden"
             />
           )}
@@ -238,7 +315,7 @@ export function PreviewPanel({
                 key={i}
                 title={btn.title}
                 onClick={() => {
-                  if (btn.primary) setIsPlaying(!isPlaying);
+                  if (btn.primary) togglePlayback();
                 }}
                 className={`p-1.5 rounded-lg transition-all ${
                   btn.primary
@@ -259,12 +336,35 @@ export function PreviewPanel({
 
           {/* Volume */}
           <div className="flex items-center gap-2 w-32 justify-end">
-            <Volume2 size={14} className="text-theme-muted shrink-0" />
-            <div
-              className="w-16 h-1 rounded-full"
-              style={{ backgroundColor: 'var(--df-border)' }}
+            <button
+              onClick={() => setIsMuted(!isMuted)}
+              className="p-0.5 rounded text-theme-muted hover:text-theme-primary transition-colors"
+              title={isMuted ? 'Ativar som' : 'Mutar'}
             >
-              <div className="h-full w-3/4 rounded-full bg-theme-muted" />
+              <Volume2 size={14} className={isMuted ? 'text-red-400' : ''} />
+            </button>
+            <div
+              className="w-16 h-1.5 rounded-full cursor-pointer relative group"
+              style={{ backgroundColor: 'var(--df-border)' }}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const newVol = Math.max(0, Math.min(1, x / rect.width));
+                setVolume(newVol);
+                setIsMuted(false);
+              }}
+            >
+              <div 
+                className="h-full rounded-full transition-all"
+                style={{ 
+                  width: `${(isMuted ? 0 : volume) * 100}%`,
+                  backgroundColor: isMuted ? 'var(--df-text-muted)' : 'var(--df-primary)'
+                }}
+              />
+              <div 
+                className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ left: `${(isMuted ? 0 : volume) * 100}%`, transform: 'translate(-50%, -50%)' }}
+              />
             </div>
           </div>
         </div>

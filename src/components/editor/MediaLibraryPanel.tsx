@@ -1,22 +1,178 @@
-import React, { useState } from 'react';
-import { FolderOpen, Search, Image, Mic, Film, Upload } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { FolderOpen, Search, Image, Upload, Film, Loader2, Sparkles } from 'lucide-react';
 import { EngineConfig } from '../../types';
-import { PexelsHub } from '../PexelsHub';
+import { MediaGrid } from './MediaGrid';
+import { PexelsResultsModal } from './PexelsResultsModal';
+import { EditorProject, generateId } from '../../types/editor';
+import { EditorPersistenceService } from '../../services/EditorPersistenceService';
+import { MediaLibraryService } from '../../services/MediaLibraryService';
+import { PexelsService, PexelsPhoto, PexelsVideo } from '../../services/PexelsService';
+import { writeFile, mkdir, exists, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { join, pictureDir } from '@tauri-apps/api/path';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 type MediaTab = 'files' | 'pexels' | 'ai';
 
 interface MediaLibraryPanelProps {
   config: EngineConfig;
+  project?: EditorProject;
+  persistence?: EditorPersistenceService;
+  onProjectUpdate?: (project: EditorProject) => void;
 }
 
-export function MediaLibraryPanel({ config }: MediaLibraryPanelProps) {
+const PEXELS_DOWNLOAD_DIR = 'DarkVideoFactory/Pexels';
+
+export function MediaLibraryPanel({ config, project, persistence, onProjectUpdate }: MediaLibraryPanelProps) {
   const [activeTab, setActiveTab] = useState<MediaTab>('files');
+
+  // Pexels state
+  const [pexelsQuery, setPexelsQuery] = useState('');
+  const [pexelsTab, setPexelsTab] = useState<'photos' | 'videos'>('photos');
+  const [showPexelsModal, setShowPexelsModal] = useState(false);
+  const [pexelsPhotos, setPexelsPhotos] = useState<PexelsPhoto[]>([]);
+  const [pexelsVideos, setPexelsVideos] = useState<PexelsVideo[]>([]);
+  const [pexelsLoading, setPexelsLoading] = useState(false);
+  const [pexelsPage, setPexelsPage] = useState(1);
+  const [importing, setImporting] = useState<number | null>(null);
 
   const tabs: { id: MediaTab; label: string; icon: React.ElementType }[] = [
     { id: 'files', label: 'Arquivos', icon: FolderOpen },
     { id: 'pexels', label: 'Pexels', icon: Search },
     { id: 'ai', label: 'IA', icon: Image },
   ];
+
+  const handleImportClick = async () => {
+    if (!project || !persistence || !onProjectUpdate) return;
+    try {
+      const updatedProject = await MediaLibraryService.importFilesToProject(project, persistence);
+      onProjectUpdate(updatedProject);
+      setActiveTab('files');
+    } catch (err) {
+      console.error('Erro ao importar arquivos:', err);
+    }
+  };
+
+  // --- Pexels Logic ---
+  const handlePexelsSearch = useCallback(async (page: number = 1) => {
+    if (!pexelsQuery.trim()) return;
+    const apiKey = config.apiKeys.pexels || '';
+    if (!apiKey) {
+      alert('Configure sua Pexels API Key nas configurações.');
+      return;
+    }
+
+    setPexelsLoading(true);
+    try {
+      const translated = await PexelsService.translateQuery(pexelsQuery, config);
+
+      if (pexelsTab === 'photos') {
+        const res = await PexelsService.searchPhotos(translated, apiKey, 15, page);
+        if (page === 1) {
+          setPexelsPhotos(res.photos || []);
+        } else {
+          setPexelsPhotos(prev => [...prev, ...(res.photos || [])]);
+        }
+      } else {
+        const res = await PexelsService.searchVideos(translated, apiKey, 15, page);
+        if (page === 1) {
+          setPexelsVideos(res.videos || []);
+        } else {
+          setPexelsVideos(prev => [...prev, ...(res.videos || [])]);
+        }
+      }
+      setPexelsPage(page);
+      setShowPexelsModal(true);
+    } catch (err) {
+      console.error('Erro ao buscar no Pexels:', err);
+    } finally {
+      setPexelsLoading(false);
+    }
+  }, [pexelsQuery, pexelsTab, config]);
+
+  const handlePexelsLoadMore = useCallback(() => {
+    handlePexelsSearch(pexelsPage + 1);
+  }, [handlePexelsSearch, pexelsPage]);
+
+  // Download file from URL and save to disk, return absolute path
+  const downloadPexelsFile = async (url: string, filename: string): Promise<string> => {
+    const dirExists = await exists(PEXELS_DOWNLOAD_DIR, { baseDir: BaseDirectory.Picture });
+    if (!dirExists) {
+      await mkdir(PEXELS_DOWNLOAD_DIR, { baseDir: BaseDirectory.Picture, recursive: true });
+    }
+
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    const filePath = `${PEXELS_DOWNLOAD_DIR}/${filename}`;
+    await writeFile(filePath, uint8Array, { baseDir: BaseDirectory.Picture });
+
+    const picDir = await pictureDir();
+    const absolutePath = await join(picDir, PEXELS_DOWNLOAD_DIR, filename);
+    return absolutePath;
+  };
+
+  // Add downloaded file to project library
+  const addToProjectLibrary = useCallback(async (
+    filePath: string,
+    name: string,
+    type: 'image' | 'video',
+    duration: number = 0
+  ) => {
+    if (!project || !persistence || !onProjectUpdate) return;
+
+    const updatedProject = { ...project };
+    if (!updatedProject.metadata) updatedProject.metadata = {};
+
+    const currentLibrary = (updatedProject.metadata as any).library || [];
+    const newItem = {
+      id: generateId(),
+      name,
+      path: filePath,
+      type,
+      thumbnail: type === 'image' ? convertFileSrc(filePath) : undefined,
+      duration: type === 'image' ? 5 : duration,
+      addedAt: new Date().toISOString(),
+    };
+
+    (updatedProject.metadata as any).library = [...currentLibrary, newItem];
+    await persistence.saveEditorProject(updatedProject);
+    onProjectUpdate(updatedProject);
+  }, [project, persistence, onProjectUpdate]);
+
+  const handleSelectPhoto = useCallback(async (photo: PexelsPhoto) => {
+    setImporting(photo.id);
+    try {
+      const ext = 'jpg';
+      const filename = `pexels_${photo.id}_${Date.now()}.${ext}`;
+      const absolutePath = await downloadPexelsFile(photo.src.large2x, filename);
+      await addToProjectLibrary(absolutePath, `pexels-${photo.id}.${ext}`, 'image');
+      setShowPexelsModal(false);
+      setActiveTab('files');
+    } catch (err) {
+      console.error('Erro ao importar foto do Pexels:', err);
+    } finally {
+      setImporting(null);
+    }
+  }, [addToProjectLibrary]);
+
+  const handleSelectVideo = useCallback(async (video: PexelsVideo) => {
+    setImporting(video.id);
+    try {
+      const hdFile = video.video_files.find(f => f.quality === 'hd') || video.video_files[0];
+      const ext = hdFile.file_type?.split('/')[1] || 'mp4';
+      const filename = `pexels_${video.id}_${Date.now()}.${ext}`;
+      const absolutePath = await downloadPexelsFile(hdFile.link, filename);
+      await addToProjectLibrary(absolutePath, `pexels-${video.id}.${ext}`, 'video', video.duration);
+      setShowPexelsModal(false);
+      setActiveTab('files');
+    } catch (err) {
+      console.error('Erro ao importar vídeo do Pexels:', err);
+    } finally {
+      setImporting(null);
+    }
+  }, [addToProjectLibrary]);
 
   return (
     <div className="flex flex-col h-full">
@@ -27,6 +183,7 @@ export function MediaLibraryPanel({ config }: MediaLibraryPanelProps) {
       >
         <span className="text-sm font-semibold text-theme-primary">Mídia</span>
         <button
+          onClick={handleImportClick}
           className="p-1.5 rounded-lg text-theme-muted hover:text-theme-primary transition-colors"
           style={{ cursor: 'pointer' }}
           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--df-bg-hover)'}
@@ -55,119 +212,132 @@ export function MediaLibraryPanel({ config }: MediaLibraryPanelProps) {
         ))}
       </div>
 
-      {/* Search - Ocultar se Pexels estiver ativo pois ele tem busca própria */}
-      {activeTab !== 'pexels' && (
+      {/* Search bar — show for files and pexels tabs */}
+      {activeTab !== 'ai' && (
         <div className="px-3 py-2 shrink-0" style={{ backgroundColor: 'var(--df-bg-secondary)' }}>
-          <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-theme-placeholder" />
-            <input
-              type="text"
-              placeholder="Buscar mídia..."
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border-theme"
-              style={{ backgroundColor: 'var(--df-bg-input)', fontSize: '12px' }}
-            />
-          </div>
+          {activeTab === 'files' ? (
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-theme-placeholder" />
+              <input
+                type="text"
+                placeholder="Buscar mídia..."
+                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border-theme"
+                style={{ backgroundColor: 'var(--df-bg-input)', fontSize: '12px' }}
+              />
+            </div>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                setPexelsPage(1);
+                setPexelsPhotos([]);
+                setPexelsVideos([]);
+                handlePexelsSearch(1);
+              }}
+              className="relative"
+            >
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-theme-placeholder" />
+              <input
+                type="text"
+                value={pexelsQuery}
+                onChange={(e) => setPexelsQuery(e.target.value)}
+                placeholder="Buscar fotos e vídeos..."
+                className="w-full pl-8 pr-16 py-1.5 text-xs rounded-lg border-theme"
+                style={{ backgroundColor: 'var(--df-bg-input)', fontSize: '12px' }}
+              />
+              <button
+                type="submit"
+                disabled={pexelsLoading || !pexelsQuery.trim()}
+                className="absolute right-1 top-1/2 -translate-y-1/2 px-2.5 py-1 text-[10px] font-semibold rounded-md bg-primary text-white hover:bg-primary-hover transition-all disabled:opacity-40"
+              >
+                {pexelsLoading ? <Loader2 size={12} className="animate-spin" /> : 'Buscar'}
+              </button>
+            </form>
+          )}
         </div>
       )}
 
       {/* Content Area */}
-      <div className="flex-1 flex flex-col items-center justify-center p-0 overflow-hidden relative">
+      <div className="flex-1 flex flex-col overflow-hidden relative">
         {activeTab === 'pexels' ? (
-          <div className="w-full h-full overflow-hidden bg-theme-primary">
-            {/* PexelsHub in mode='hub' will render full content */}
-            <PexelsHub 
-              mode="hub" 
-              config={config} 
-              onSelect={(url, type) => {
-                // Future: add to project timeline
-                console.log('Selecionado do Pexels:', url, type);
-              }}
-            />
-          </div>
-        ) : (
-          <div className="flex flex-col items-center p-6 h-full w-full overflow-y-auto custom-scrollbar">
-            <div
-              className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-dashed w-full max-w-[200px] mb-6"
-              style={{ borderColor: 'var(--df-border)' }}
-            >
+          <div className="flex flex-col h-full bg-theme-secondary">
+            {/* Toggle Fotos / Vídeos */}
+            <div className="px-3 py-2 shrink-0">
               <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center"
-                style={{ backgroundColor: 'var(--df-bg-hover)' }}
+                className="flex rounded-lg overflow-hidden border border-theme"
+                style={{ backgroundColor: 'var(--df-bg-input)' }}
               >
-                {activeTab === 'files' && <FolderOpen size={22} className="text-theme-muted" />}
-                {activeTab === 'ai' && <Image size={22} className="text-theme-muted" />}
+                <button
+                  onClick={() => setPexelsTab('photos')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium transition-all ${
+                    pexelsTab === 'photos'
+                      ? 'bg-primary text-white'
+                      : 'text-theme-muted hover:text-theme-primary'
+                  }`}
+                >
+                  <Image size={12} />
+                  Fotos
+                </button>
+                <button
+                  onClick={() => setPexelsTab('videos')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium transition-all ${
+                    pexelsTab === 'videos'
+                      ? 'bg-primary text-white'
+                      : 'text-theme-muted hover:text-theme-primary'
+                  }`}
+                >
+                  <Film size={12} />
+                  Vídeos
+                </button>
               </div>
-              <span className="text-xs text-theme-muted text-center leading-relaxed">
-                {activeTab === 'files' && 'Arraste arquivos aqui ou clique para importar'}
-                {activeTab === 'ai' && (
-                   <div className="flex flex-col gap-2">
-                      <span>Dica: Use a tab "Imagens" para criar com IA</span>
-                   </div>
-                )}
-              </span>
             </div>
 
-            {/* Mock Files for Drag & Drop Testing */}
-            {activeTab === 'files' && (
-              <div className="w-full space-y-2">
-                <span className="text-xs font-semibold text-theme-muted mb-2 block">Arquivos de Projeto (Mock)</span>
-                {[
-                  { id: 'm1', type: 'video', name: 'cena_abertura.mp4', duration: 10, src: 'mock_abertura.mp4' },
-                  { id: 'm2', type: 'audio', name: 'musica_fundo.mp3', duration: 30, src: 'mock_musica.mp3' },
-                  { id: 'm3', type: 'image', name: 'logo.png', duration: 5, src: 'mock_logo.png' },
-                ].map(f => (
-                  <div 
-                    key={f.id} 
-                    className="p-2 border border-theme rounded flex items-center gap-2 cursor-grab transition-colors"
-                    style={{ backgroundColor: 'var(--df-bg-secondary)' }}
-                    onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--df-bg-hover)'}
-                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--df-bg-secondary)'}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData('application/json', JSON.stringify({
-                         type: 'media',
-                         item: f
-                      }));
-                      e.dataTransfer.effectAllowed = 'copy';
-                    }}
-                  >
-                    <div className="w-8 h-8 rounded shrink-0 flex items-center justify-center" style={{ backgroundColor: 'var(--df-bg-primary)' }}>
-                      {f.type === 'video' ? <Film size={14} className="text-blue-500" /> : f.type === 'audio' ? <Mic size={14} className="text-green-500" /> : <Image size={14} className="text-purple-500" />}
-                    </div>
-                    <div className="flex flex-col flex-1 min-w-0">
-                      <span className="text-xs text-theme-primary truncate">{f.name}</span>
-                      <span className="text-[10px] text-theme-muted">{f.duration}s</span>
-                    </div>
-                  </div>
-                ))}
+            {/* Empty state */}
+            <div className="flex-1 flex flex-col items-center justify-center p-6">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-theme-hover mb-3">
+                <Search size={22} className="text-theme-muted" />
               </div>
-            )}
-            
-            {/* Quick Media Icons */}
-            {activeTab === 'ai' && (
-              <div className="flex items-center gap-4 mt-2">
-                {[
-                  { icon: Film, label: 'Vídeo' },
-                  { icon: Mic, label: 'Áudio' },
-                  { icon: Image, label: 'Imagem' },
-                ].map((item) => (
-                  <div key={item.label} className="flex flex-col items-center gap-1.5 cursor-pointer group">
-                    <div
-                      className="w-10 h-10 rounded-lg flex items-center justify-center transition-colors"
-                      style={{ backgroundColor: 'var(--df-bg-hover)' }}
-                    >
-                      <item.icon size={18} className="text-theme-muted group-hover:text-primary transition-colors" />
-                    </div>
-                    <span className="text-[10px] text-theme-muted group-hover:text-theme-primary transition-colors">
-                      {item.label}
-                    </span>
-                  </div>
-                ))}
+              <span className="text-xs text-theme-muted text-center leading-relaxed max-w-[180px]">
+                Busque por fotos ou vídeos gratuitos do Pexels para importar ao seu projeto
+              </span>
+            </div>
+          </div>
+        ) : activeTab === 'files' ? (
+          <MediaGrid 
+            project={project} 
+            persistence={persistence} 
+            onProjectUpdate={onProjectUpdate} 
+          />
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 h-full w-full overflow-y-auto custom-scrollbar">
+            <div className="group cursor-pointer w-full max-w-[200px]">
+              <div className="aspect-video rounded-lg overflow-hidden border border-theme border-dashed group-hover:border-primary/50 transition-colors flex flex-col items-center justify-center gap-2 bg-theme-hover/20">
+                <div className="p-2 rounded-full bg-primary/10 text-primary">
+                  <Sparkles size={20} />
+                </div>
+                <span className="text-[11px] font-semibold text-theme-secondary">Gerar novos assets com IA</span>
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
+
+      {/* Pexels Results Modal */}
+      {showPexelsModal && (
+        <PexelsResultsModal
+          query={pexelsQuery}
+          tab={pexelsTab}
+          photos={pexelsPhotos}
+          videos={pexelsVideos}
+          loading={pexelsLoading}
+          importing={importing}
+          onClose={() => setShowPexelsModal(false)}
+          onSelectPhoto={handleSelectPhoto}
+          onSelectVideo={handleSelectVideo}
+          onLoadMore={handlePexelsLoadMore}
+          hasMore={(pexelsTab === 'photos' ? pexelsPhotos.length : pexelsVideos.length) >= 15}
+        />
+      )}
     </div>
   );
 }

@@ -222,6 +222,82 @@ fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+/// Copy a file from source to destination
+#[tauri::command]
+fn copy_file(source: String, destination: String) -> Result<(), String> {
+    use std::path::Path;
+    use std::fs::create_dir_all;
+
+    let dest_path = Path::new(&destination);
+    if let Some(parent) = dest_path.parent() {
+        create_dir_all(parent).map_err(|e| format!("Failed to create parent dir: {}", e))?;
+    }
+    std::fs::copy(&source, &destination)
+        .map_err(|e| format!("Failed to copy '{}' to '{}': {}", source, destination, e))?;
+    Ok(())
+}
+
+/// Create a directory recursively
+#[tauri::command]
+fn create_dir_recursive(path: String) -> Result<(), String> {
+    std::fs::create_dir_all(&path)
+        .map_err(|e| format!("Failed to create directory '{}': {}", path, e))
+}
+
+/// Execute FFprobe with given arguments
+#[tauri::command]
+fn run_ffprobe(args: Vec<String>) -> FfmpegResult {
+    match Command::new("ffprobe").args(&args).output() {
+        Ok(output) => FfmpegResult {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code(),
+        },
+        Err(e) => FfmpegResult {
+            success: false,
+            stdout: String::new(),
+            stderr: format!("Failed to execute ffprobe: {}", e),
+            exit_code: None,
+        },
+    }
+}
+
+/// Execute Remotion render in the remotion/ subfolder
+#[tauri::command]
+fn run_remotion_render(project_dir: String, args: Vec<String>) -> FfmpegResult {
+    let remotion_dir = std::path::Path::new(&project_dir).join("remotion");
+
+    // Use npx to run remotion render
+    let result = if cfg!(windows) {
+        Command::new("cmd")
+            .args(&["/C", "npx"])
+            .args(&args)
+            .current_dir(&remotion_dir)
+            .output()
+    } else {
+        Command::new("npx")
+            .args(&args)
+            .current_dir(&remotion_dir)
+            .output()
+    };
+
+    match result {
+        Ok(output) => FfmpegResult {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code(),
+        },
+        Err(e) => FfmpegResult {
+            success: false,
+            stdout: String::new(),
+            stderr: format!("Failed to execute remotion render: {}", e),
+            exit_code: None,
+        },
+    }
+}
+
 /// Get basic system info (CPU count, memory)
 #[tauri::command]
 fn get_system_info() -> serde_json::Value {
@@ -244,9 +320,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_ffmpeg,
             run_ffmpeg,
+            run_ffprobe,
+            run_remotion_render,
             get_system_info,
             write_file,
             read_file,
+            copy_file,
+            create_dir_recursive,
             delete_file_cmd,
             delete_dir_cmd,
             file_exists,
