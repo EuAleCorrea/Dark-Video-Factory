@@ -1,0 +1,53 @@
+src/App.tsx(642,124): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/App.tsx(658,52): error TS2339: Property 'SUBTITLES' does not exist on type 'typeof PipelineStage'.
+src/App.tsx(666,99): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/Dashboard.tsx(72,49): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/Dashboard.tsx(72,79): error TS2339: Property 'SUBTITLES' does not exist on type 'typeof PipelineStage'.
+src/components/editor/steps/SubtitleStep.tsx(58,29): error TS2339: Property 'durationEstimate' does not exist on type 'ScriptChunk'.
+src/components/editor/TextToolsPanel.tsx(32,23): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/editor/TextToolsPanel.tsx(104,28): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/editor/TextToolsPanel.tsx(105,29): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/ProjectCard.tsx(29,7): error TS2741: Property '[PipelineStage.SCENES]' is missing in type '{ [PipelineStage.AUDIO_COMPRESS]: string; [PipelineStage.SUBTITLES]: string; reference: "reference"; script: "script"; audio: "audio"; images: "images"; video: "video"; publish_yt: "publish_yt"; thumbnail: "thumbnail"; publish_thumb: "publish_thumb"; }' but required in type 'Record<PipelineStage, keyof StageDataMap>'.
+src/components/ProjectCard.tsx(33,20): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/ProjectCard.tsx(34,20): error TS2339: Property 'SUBTITLES' does not exist on type 'typeof PipelineStage'.
+src/components/ProjectCard.tsx(43,7): error TS2741: Property '[PipelineStage.SCENES]' is missing in type '{ [PipelineStage.AUDIO_COMPRESS]: { icon: React.ForwardRefExoticComponent<Omit<LucideProps, "ref"> & React.RefAttributes<SVGSVGElement>>; tooltip: string; }; [PipelineStage.SUBTITLES]: { ...; }; ... 7 more ...; publish_thumb: { ...; }; }' but required in type 'Record<PipelineStage, { icon: any; tooltip: string; }>'.
+src/components/ProjectCard.tsx(47,20): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/ProjectCard.tsx(48,20): error TS2339: Property 'SUBTITLES' does not exist on type 'typeof PipelineStage'.
+src/components/StageActionModal.tsx(144,120): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/StageActionModal.tsx(209,28): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/StageActionModal.tsx(221,28): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/StageActionModal.tsx(236,28): error TS2339: Property 'SUBTITLES' does not exist on type 'typeof PipelineStage'.
+src/components/StageDetailsModal.tsx(2,71): error TS2305: Module '"../types"' has no exported member 'SubtitlesStageData'.
+src/components/StageDetailsModal.tsx(2,107): error TS2305: Module '"../types"' has no exported member 'AudioCompressStageData'.
+src/components/StageDetailsModal.tsx(57,70): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/StageDetailsModal.tsx(63,49): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/StageDetailsModal.tsx(110,43): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(113,54): error TS7006: Parameter 'seg' implicitly has an 'any' type.
+src/components/StageDetailsModal.tsx(120,17): error TS2353: Object literal may only specify known properties, and 'subtitles' does not exist in type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(130,43): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(133,54): error TS7006: Parameter 'seg' implicitly has an 'any' type.
+src/components/StageDetailsModal.tsx(140,17): error TS2353: Object literal may only specify known properties, and 'subtitles' does not exist in type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(161,43): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(170,47): error TS7006: Parameter 's' implicitly has an 'any' type.
+src/components/StageDetailsModal.tsx(237,51): error TS7006: Parameter 's' implicitly has an 'any' type.
+src/components/StageDetailsModal.tsx(311,33): error TS2353: Object literal may only specify known properties, and 'subtitles' does not exist in type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(930,32): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/components/StageDetailsModal.tsx(931,69): error TS2339: Property 'audio_compress' does not exist on type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(932,32): error TS2339: Property 'SUBTITLES' does not exist on type 'typeof PipelineStage'.
+src/components/StageDetailsModal.tsx(933,65): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(935,62): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/components/StageDetailsModal.tsx(1001,94): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/services/PipelineExecutor.ts(61,36): error TS2339: Property 'AUDIO_COMPRESS' does not exist on type 'typeof PipelineStage'.
+src/services/PipelineExecutor.ts(63,36): error TS2339: Property 'SUBTITLES' does not exist on type 'typeof PipelineStage'.
+src/services/PipelineExecutor.ts(398,42): error TS2339: Property 'audio_compress' does not exist on type 'StageDataMap'.
+src/services/PipelineExecutor.ts(410,66): error TS2353: Object literal may only specify known properties, and 'audio_compress' does not exist in type 'Partial<StageDataMap>'.
+src/services/PipelineExecutor.ts(434,49): error TS2339: Property 'audio_compress' does not exist on type 'StageDataMap'.
+src/services/PipelineExecutor.ts(456,29): error TS2339: Property 'durationEstimate' does not exist on type 'ScriptChunk'.
+src/services/PipelineExecutor.ts(472,43): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/services/PipelineExecutor.ts(483,66): error TS2353: Object literal may only specify known properties, and 'subtitles' does not exist in type 'Partial<StageDataMap>'.
+src/services/PipelineExecutor.ts(499,48): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/services/PipelineExecutor.ts(521,17): error TS2353: Object literal may only specify known properties, and 'subtitles' does not exist in type 'StageDataMap'.
+src/services/PipelineExecutor.ts(532,17): error TS2353: Object literal may only specify known properties, and 'subtitles' does not exist in type 'StageDataMap'.
+src/services/VideoRenderService.ts(167,44): error TS2339: Property 'subtitles' does not exist on type 'StageDataMap'.
+src/services/VideoRenderService.ts(168,49): error TS2339: Property 'audio_compress' does not exist on type 'StageDataMap'.
+src/services/VideoRenderService.ts(180,61): error TS7006: Parameter 's' implicitly has an 'any' type.

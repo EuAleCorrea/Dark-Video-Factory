@@ -12,50 +12,73 @@
 export interface ScriptChunk {
   id: number;
   text: string;
-  durationEstimate: number; // in seconds
   wordCount: number;
 }
 
-export const smartChunkScript = (fullScript: string): ScriptChunk[] => {
-  const WORDS_PER_SECOND = 2.5;
-  const MIN_SECONDS = 9;
-  const MAX_SECONDS = 18;
-
+export const smartChunkScript = (
+  fullScript: string,
+  wordsPerScene: number = 250,
+  maxScenes: number = 15
+): ScriptChunk[] => {
   const words = fullScript.split(/\s+/);
   const chunks: ScriptChunk[] = [];
   
   let currentChunkWords: string[] = [];
   let currentWordCount = 0;
 
-  words.forEach((word, index) => {
+  // We want to try finding a sentence boundary close to wordsPerScene
+  const tolerance = Math.floor(wordsPerScene * 0.2); // 20% tolerance
+  const minWords = wordsPerScene - tolerance;
+  const maxWords = wordsPerScene + tolerance;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
     currentChunkWords.push(word);
     currentWordCount++;
 
-    const currentDuration = currentWordCount / WORDS_PER_SECOND;
-    
-    // Check if we should close the chunk
-    // 1. If we hit the max limit.
-    // 2. If we are within the valid range (9-18s) AND we hit a sentence ending punctuation (natural pause).
-    // 3. If it's the very last word.
-    
-    const isMaxLimit = currentDuration >= MAX_SECONDS;
     const isSentenceEnd = /[.!?]$/.test(word);
-    const isValidRange = currentDuration >= MIN_SECONDS;
-    const isLastWord = index === words.length - 1;
+    const isLastWord = i === words.length - 1;
+    const isOverMaxWords = currentWordCount >= maxWords;
+    const isWithinValidRange = currentWordCount >= minWords && isSentenceEnd;
+    
+    // We should close the chunk if:
+    // 1. It's the last word
+    // 2. We are within the target range AND at a sentence end
+    // 3. We've exceeded max words (force cut to avoid giant chunks)
+    if (isLastWord || isWithinValidRange || isOverMaxWords) {
+      // If we are about to hit maxScenes, we just cram everything else into the last scene
+      if (chunks.length === maxScenes - 1 && !isLastWord) {
+        // Just let it continue accumulating until the very end
+        continue;
+      }
 
-    if ((isValidRange && isSentenceEnd) || isMaxLimit || isLastWord) {
       chunks.push({
         id: chunks.length + 1,
         text: currentChunkWords.join(' '),
-        durationEstimate: parseFloat(currentDuration.toFixed(2)),
         wordCount: currentWordCount
       });
       
-      // Reset for next chunk
       currentChunkWords = [];
       currentWordCount = 0;
     }
-  });
+  }
+
+  // If there are leftovers due to maxScenes limitation, they should already be in the last chunk
+  // because of the `continue` above, but just in case:
+  if (currentChunkWords.length > 0) {
+    if (chunks.length < maxScenes) {
+      chunks.push({
+        id: chunks.length + 1,
+        text: currentChunkWords.join(' '),
+        wordCount: currentWordCount
+      });
+    } else {
+      // Append to the last chunk
+      const lastChunk = chunks[chunks.length - 1];
+      lastChunk.text += ' ' + currentChunkWords.join(' ');
+      lastChunk.wordCount += currentWordCount;
+    }
+  }
 
   return chunks;
 };

@@ -2,7 +2,6 @@ import React from "react";
 import {
   AbsoluteFill,
   Img,
-  Sequence,
   staticFile,
   useCurrentFrame,
   useVideoConfig,
@@ -13,21 +12,16 @@ import { TransitionSeries, linearTiming } from "@remotion/transitions";
 import { fade } from "@remotion/transitions/fade";
 import { z } from "zod";
 
-// ─── Schema (para validação via CLI) ────────────────────────
+// ─── Schema (para validação via CLI e ExportStep) ────────────
 
 export const darkVideoSchema = z.object({
   scenes: z.array(
     z.object({
+      id: z.number().optional(),
       imagePath: z.string(),
-      duration: z.number(),
-    })
-  ),
-  audioSrc: z.string(),
-  captions: z.array(
-    z.object({
+      audioPath: z.string(),
       text: z.string(),
-      startMs: z.number(),
-      endMs: z.number(),
+      duration: z.number(),
     })
   ),
   format: z.enum(["vertical", "horizontal"]),
@@ -74,31 +68,10 @@ const KenBurnsImage: React.FC<{
   );
 };
 
-// ─── Caption Overlay Component ──────────────────────────────
+// ─── Setup Caption Component for Individual Scene ─────────────
 
-const CaptionOverlay: React.FC<{
-  captions: DarkVideoProps["captions"];
-}> = ({ captions }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const currentMs = (frame / fps) * 1000;
-
-  const activeCaption = captions.find(
-    (c) => currentMs >= c.startMs && currentMs <= c.endMs
-  );
-
-  if (!activeCaption) return null;
-
-  // Fade in/out
-  const fadeInEnd = activeCaption.startMs + 200;
-  const fadeOutStart = activeCaption.endMs - 200;
-
-  const opacity = interpolate(
-    currentMs,
-    [activeCaption.startMs, fadeInEnd, fadeOutStart, activeCaption.endMs],
-    [0, 1, 1, 0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-  );
+const SceneCaption: React.FC<{ text: string }> = ({ text }) => {
+  if (!text || text.trim() === "") return null;
 
   return (
     <AbsoluteFill
@@ -114,7 +87,6 @@ const CaptionOverlay: React.FC<{
           borderRadius: 12,
           padding: "12px 24px",
           maxWidth: "85%",
-          opacity,
         }}
       >
         <span
@@ -128,7 +100,7 @@ const CaptionOverlay: React.FC<{
             textShadow: "0 2px 8px rgba(0,0,0,0.5)",
           }}
         >
-          {activeCaption.text}
+          {text}
         </span>
       </div>
     </AbsoluteFill>
@@ -139,8 +111,6 @@ const CaptionOverlay: React.FC<{
 
 export const DarkVideo: React.FC<DarkVideoProps> = ({
   scenes,
-  audioSrc,
-  captions,
   transitionDuration = 15,
   kenBurnsEnabled = true,
 }) => {
@@ -148,10 +118,13 @@ export const DarkVideo: React.FC<DarkVideoProps> = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {/* Imagens com transições */}
       <TransitionSeries>
         {scenes.map((scene, index) => {
-          const durationInFrames = Math.round(scene.duration * fps);
+          const durationInFrames = Math.max(
+            Math.round(scene.duration * fps),
+            1 // prevent 0 frames sequence
+          );
+
           const elements: React.ReactNode[] = [];
 
           elements.push(
@@ -164,6 +137,8 @@ export const DarkVideo: React.FC<DarkVideoProps> = ({
                 durationInFrames={durationInFrames}
                 enabled={kenBurnsEnabled}
               />
+              <SceneCaption text={scene.text} />
+              <Audio src={staticFile(scene.audioPath)} />
             </TransitionSeries.Sequence>
           );
 
@@ -181,12 +156,6 @@ export const DarkVideo: React.FC<DarkVideoProps> = ({
           return elements;
         })}
       </TransitionSeries>
-
-      {/* Áudio narração */}
-      <Audio src={staticFile(audioSrc)} />
-
-      {/* Legendas sobrepostas */}
-      {captions.length > 0 && <CaptionOverlay captions={captions} />}
     </AbsoluteFill>
   );
 };

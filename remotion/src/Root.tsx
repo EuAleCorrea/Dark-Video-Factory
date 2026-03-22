@@ -8,7 +8,7 @@ import { DarkVideo, DarkVideoProps, darkVideoSchema } from "./DarkVideo";
 
 const RemotionRoot: React.FC = () => {
   return (
-    <Composition<DarkVideoProps>
+    <Composition
       id="DarkVideo"
       component={DarkVideo}
       durationInFrames={300}
@@ -18,10 +18,13 @@ const RemotionRoot: React.FC = () => {
       schema={darkVideoSchema}
       defaultProps={{
         scenes: [
-          { imagePath: "images/placeholder.jpg", duration: 5 },
+          { 
+            imagePath: "images/placeholder.jpg",
+            audioPath: "audio/placeholder.wav",
+            text: "Exemplo de Legenda",
+            duration: 5 
+          },
         ],
-        audioSrc: "audio/narration.mp3",
-        captions: [],
         format: "vertical",
         transitionDuration: 15,
         kenBurnsEnabled: true,

@@ -2,7 +2,7 @@ import React from 'react';
 import { VideoProject, StageMeta, PipelineStage, StageDataMap, PIPELINE_STAGES_ORDER } from '../types';
 import {
     CheckCircle, AlertTriangle, Loader2, Clock, CheckCircle2, Circle, Hourglass,
-    Trash2, BookOpen, FileText, Mic, Volume2, Subtitles, ImageIcon, Film, Upload, ImagePlus, Send
+    Trash2, BookOpen, FileText, Mic, Volume2, Subtitles, ImageIcon, Film, Upload, ImagePlus, Send, Layout
 } from 'lucide-react';
 
 interface ProjectCardProps {
@@ -30,6 +30,7 @@ const STAGE_DATA_KEY: Record<PipelineStage, keyof StageDataMap> = {
     [PipelineStage.REFERENCE]: 'reference',
     [PipelineStage.SCRIPT]: 'script',
     [PipelineStage.AUDIO]: 'audio',
+    [PipelineStage.SCENES]: 'scenes',
     [PipelineStage.AUDIO_COMPRESS]: 'audio_compress',
     [PipelineStage.SUBTITLES]: 'subtitles',
     [PipelineStage.IMAGES]: 'images',
@@ -44,6 +45,7 @@ const STAGE_ICON_MAP: Record<PipelineStage, { icon: any; tooltip: string }> = {
     [PipelineStage.REFERENCE]: { icon: BookOpen, tooltip: 'Referência' },
     [PipelineStage.SCRIPT]: { icon: FileText, tooltip: 'Roteiro' },
     [PipelineStage.AUDIO]: { icon: Mic, tooltip: 'Áudio' },
+    [PipelineStage.SCENES]: { icon: Layout, tooltip: 'Cenas' },
     [PipelineStage.AUDIO_COMPRESS]: { icon: Volume2, tooltip: 'Compressão' },
     [PipelineStage.SUBTITLES]: { icon: Subtitles, tooltip: 'Legendas' },
     [PipelineStage.IMAGES]: { icon: ImageIcon, tooltip: 'Imagens' },

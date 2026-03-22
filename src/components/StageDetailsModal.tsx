@@ -651,7 +651,7 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
             <div className="p-6 space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <StatCard icon={Captions} label="Segmentos" value={`${subData.segmentCount}`} color="emerald" />
-                    <StatCard icon={Clock} label="Duração Total" value={`${subData.totalDuration.toFixed(1)}s`} color="blue" />
+                    <StatCard icon={Clock} label="Duração Total" value={`${(subData.totalDuration || 0).toFixed(1)}s`} color="blue" />
                     <StatCard icon={Type} label="Palavras" value={`${subData.wordCount || 0}`} color="purple" />
                 </div>
 
@@ -701,7 +701,7 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
             <div className="p-6 space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <StatCard icon={ImageIcon} label="Cenas Planejadas" value={`${sceneCount}`} color="emerald" />
-                    <StatCard icon={Clock} label="Duração" value={`${subData.totalDuration.toFixed(1)}s`} color="blue" />
+                    <StatCard icon={Clock} label="Duração" value={`${(subData.totalDuration || 0).toFixed(1)}s`} color="blue" />
                     <StatCard icon={Cpu} label="Modelo IA" value={(() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} [${m.badge}]` : config?.providers.image || 'N/A'; })()} color="purple" />
                     <StatCard icon={Zap} label="Otimização" value="Ativa" color="orange" />
                 </div>

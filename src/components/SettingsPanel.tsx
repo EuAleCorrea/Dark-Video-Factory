@@ -63,6 +63,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
         setIsSaved(false);
     };
 
+    const handleSceneConfigChange = (field: keyof NonNullable<EngineConfig['sceneConfig']>, value: any) => {
+        setLocalConfig(prev => ({
+            ...prev,
+            sceneConfig: {
+                wordsPerScene: 250,
+                maxScenes: 15,
+                autoCompress: true,
+                ...prev.sceneConfig,
+                [field]: value
+            }
+        }));
+        setIsSaved(false);
+    };
+
     const handleModelChange = (modelId: string) => {
         const model = availableModels.find(m => m.id === modelId);
         if (!model) return;
@@ -352,6 +366,64 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) => {
                         />
                         <p className="text-xs text-slate-500 mt-1">
                             Local onde você guarda assets já exportados e preparados.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* SCENES CONFIGURATION */}
+            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm">
+                <h3 className="text-base font-bold text-[#64748B] uppercase tracking-wider mb-6 flex items-center gap-2 pb-4 border-b border-[#E2E8F0]">
+                    <Box size={18} className="text-teal-500" /> Configurações de Cenas
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="col-span-1">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                            Palavras por Cena
+                        </label>
+                        <input
+                            type="number"
+                            className="w-full bg-[#f1f5f9] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-teal-500 outline-none"
+                            value={localConfig.sceneConfig?.wordsPerScene || 250}
+                            onChange={(e) => handleSceneConfigChange('wordsPerScene', parseInt(e.target.value) || 250)}
+                            min={50} max={1000}
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                            Tamanho ideal para cada geração de áudio/imagem. Padrão: 250.
+                        </p>
+                    </div>
+
+                    <div className="col-span-1">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                            Máximo de Cenas
+                        </label>
+                        <input
+                            type="number"
+                            className="w-full bg-[#f1f5f9] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-mono text-sm focus:border-teal-500 outline-none"
+                            value={localConfig.sceneConfig?.maxScenes || 15}
+                            onChange={(e) => handleSceneConfigChange('maxScenes', parseInt(e.target.value) || 15)}
+                            min={1} max={50}
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                            Limite máximo em caso de roteiros muito extensos. Padrão: 15.
+                        </p>
+                    </div>
+
+                    <div className="col-span-1">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                            Compactação Automática
+                        </label>
+                        <select
+                            className="w-full bg-[#f1f5f9] border border-[#E2E8F0] rounded-lg px-4 py-3 text-[#0F172A] font-medium text-sm focus:border-teal-500 outline-none appearance-none"
+                            value={localConfig.sceneConfig?.autoCompress !== false ? 'true' : 'false'}
+                            onChange={(e) => handleSceneConfigChange('autoCompress', e.target.value === 'true')}
+                        >
+                            <option value="true">Ativada (Padrão)</option>
+                            <option value="false">Desativada</option>
+                        </select>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Reduz tamanho dos áudios gerados preservando qualidade.
                         </p>
                     </div>
                 </div>

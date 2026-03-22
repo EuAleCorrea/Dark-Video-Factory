@@ -10,21 +10,17 @@ import {
   CheckCircle2, 
   Clock, 
   AlertCircle, 
-  GitBranch 
+  GitBranch,
+  Layout
 } from 'lucide-react';
-import { PipelineStage, EngineConfig, ChannelProfile } from '../../types';
+import { PipelineStage, EngineConfig, ChannelProfile, SceneData } from '../../types';
 import { ReferenceStep } from './steps/ReferenceStep';
 import { ScriptStep } from './steps/ScriptStep';
+import { ScenesStep } from './steps/ScenesStep';
 import { AudioStep } from './steps/AudioStep';
-import { SubtitleStep } from './steps/SubtitleStep';
 import { ImagesStep } from './steps/ImagesStep';
 import { ExportStep } from './steps/ExportStep';
-import { getAudioDuration } from '../../lib/audioUtils';
 import { EditorProject, createClip } from '../../types/editor';
-import { StoryboardSegment } from '../../types';
-
-
-
 
 interface WorkflowStepProps {
   title: string;
@@ -74,7 +70,7 @@ const WorkflowStep: React.FC<WorkflowStepProps> = ({ title, icon: Icon, status, 
 
       {/* Step Content */}
       <div className={`transition-all duration-300 overflow-hidden ${isExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'}`}>
-        <div className="p-5 border-t border-theme-hover bg-theme-primary/5 min-h-[100px]">
+        <div className="p-5 border-t border-theme-hover bg-theme-primary/5 min-h-[100px] custom-scrollbar overflow-y-auto">
           {children}
         </div>
       </div>
@@ -90,7 +86,6 @@ interface WorkflowPanelProps {
   activeProfileId?: string;
 }
 
-
 interface Step {
   title: string;
   id: PipelineStage;
@@ -105,31 +100,25 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
   const [steps, setSteps] = useState<Step[]>([
     { title: '1. Referência', id: PipelineStage.REFERENCE, icon: Video, status: 'pending', label: 'Encontre o vídeo âncora' },
     { title: '2. Roteiro', id: PipelineStage.SCRIPT, icon: FileText, status: 'pending', label: 'Reescreva a narrativa' },
-    { title: '3. Áudio', id: PipelineStage.AUDIO, icon: Music, status: 'pending', label: 'Gere narração de alta qualidade' },
-    { title: '4. Legendas', id: PipelineStage.SUBTITLES, icon: Type, status: 'pending', label: 'Sincronize textos no tempo' },
+    { title: '3. Cenas', id: PipelineStage.SCENES, icon: Layout, status: 'pending', label: 'Divida em cenas e crie prompts' },
+    { title: '4. Áudio', id: PipelineStage.AUDIO, icon: Music, status: 'pending', label: 'Gere narração de alta qualidade' },
     { title: '5. Imagens', id: PipelineStage.IMAGES, icon: ImageIcon, status: 'pending', label: 'Crie visuais magníficos' },
-    { title: '6. Exportar', id: PipelineStage.VIDEO, icon: Share2, status: 'pending', label: 'Renderize via FFmpeg' }
+    { title: '6. Exportar', id: PipelineStage.VIDEO, icon: Share2, status: 'pending', label: 'Renderize no Remotion' }
   ]);
 
   const [transcript, setTranscript] = useState('');
   const [rewrittenScript, setRewrittenScript] = useState('');
   const [metadata, setMetadata] = useState<any>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [audioBytes, setAudioBytes] = useState<Uint8Array | null>(null);
-  const [srtContent, setSrtContent] = useState('');
-  const [assContent, setAssContent] = useState('');
-  const [segments, setSegments] = useState<StoryboardSegment[]>([]);
+  const [scenes, setScenes] = useState<SceneData[]>([]);
 
 
   const handleToggle = (idx: number) => {
     setExpandedStep(expandedStep === idx ? null : idx);
   };
 
-
   const updateStepStatus = (id: PipelineStage, status: Step['status']) => {
     setSteps(prev => prev.map(s => s.id === id ? { ...s, status } : s));
   };
-
 
   const completedCount = steps.filter(s => s.status === 'completed').length;
   const progressPercent = Math.round((completedCount / steps.length) * 100);
@@ -160,7 +149,6 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
           <span className="text-[10px] font-bold text-theme-muted uppercase">{completedCount}/{steps.length} concluídos</span>
         </div>
       </div>
-
 
       <div className="flex-1 p-4 overflow-y-auto no-scrollbar custom-scrollbar pb-20">
         {steps.map((step, idx) => (
@@ -196,111 +184,65 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
                     setRewrittenScript(script);
                     setMetadata(data);
                     updateStepStatus(PipelineStage.SCRIPT, 'completed');
-                    setExpandedStep(2); // Auto-expand Step 3 (Áudio)
+                    setExpandedStep(2); // Auto-expand Step 3 (Cenas)
                   }}
                   initialScript={rewrittenScript}
                   initialMetadata={metadata}
                 />
+              ) : step.id === PipelineStage.SCENES ? (
+                <ScenesStep 
+                   config={config}
+                   script={rewrittenScript}
+                   status={step.status}
+                   onScenesGenerated={(generatedScenes) => {
+                      setScenes(generatedScenes);
+                      updateStepStatus(PipelineStage.SCENES, 'completed');
+                      setExpandedStep(3); // Auto-expand Step 4 (Audio)
+                   }}
+                />
               ) : step.id === PipelineStage.AUDIO ? (
                 <AudioStep 
                   config={config} 
-                  script={rewrittenScript}
-                  onAudioGenerated={async (url, bytes) => {
-                    setAudioUrl(url);
-                    setAudioBytes(bytes);
+                  scenes={scenes}
+                  onAudioGenerated={async (newScenes) => {
+                    setScenes([...newScenes]);
                     updateStepStatus(PipelineStage.AUDIO, 'completed');
                     
-                    // Auto-Place Timeline Logic
+                    // Auto-Place Timeline Logic (Simples para preview, mas agora lidamos com cenas isoladas)
                     if (project && onProjectUpdate) {
-                      try {
-                        const duration = await getAudioDuration(url);
-                        const audioTrack = project.tracks.find(t => t.type === 'audio');
-                        if (audioTrack) {
-                          const newClip = createClip(
-                            audioTrack.id,
-                            { type: 'audio', url, waveform: [] },
-                            0, // Start at absolute zero
-                            duration
-                          );
+                       const audioTrack = project.tracks.find(t => t.type === 'audio');
+                       if (audioTrack) {
+                          let currentStart = 0;
+                          const clips = newScenes.filter(s => s.audioUrl).map(seg => {
+                            const clip = createClip(
+                               audioTrack.id,
+                               { type: 'audio', url: seg.audioUrl!, waveform: [] },
+                               currentStart,
+                               seg.audioDuration || 5
+                            );
+                            currentStart += (seg.audioDuration || 5);
+                            return clip;
+                          });
                           
                           const newTracks = project.tracks.map(t => 
-                            t.id === audioTrack.id 
-                              ? { ...t, clips: [newClip] } // Replace old audio for now
-                              : t
+                             t.id === audioTrack.id ? { ...t, clips } : t
                           );
-                          
-                          onProjectUpdate({ tracks: newTracks, duration: Math.max(project.duration, duration) });
-                        }
-                      } catch (err) {
-                        console.error('Falha ao auto-alocar áudio na timeline:', err);
-                      }
-                    }
-
-                    setExpandedStep(3); // Auto-expand Step 4 (Legendas)
-                  }}
-                  initialAudio={audioUrl || undefined}
-                />
-              ) : step.id === PipelineStage.SUBTITLES ? (
-                <SubtitleStep 
-                  config={config} 
-                  script={rewrittenScript}
-                  audioUrl={audioUrl || undefined}
-                  audioBytes={audioBytes || undefined}
-                  activeProfile={profiles.find(p => p.id === activeProfileId)}
-                  onSubtitlesGenerated={(srt, ass, segs) => {
-                    setSrtContent(srt);
-                    setAssContent(ass);
-                    setSegments(segs);
-                    updateStepStatus(PipelineStage.SUBTITLES, 'completed');
-                    
-                    // Auto-Place Timeline Logic for Subtitles
-                    if (project && onProjectUpdate) {
-                      const subTrack = project.tracks.find(t => t.type === 'subtitle');
-                      if (subTrack) {
-                        const activeProfile = profiles.find(p => p.id === activeProfileId);
-                        const subStyle = activeProfile ? {
-                          fontName: activeProfile.subtitleStyle.fontName,
-                          fontSize: activeProfile.subtitleStyle.fontSize,
-                          primaryColor: activeProfile.subtitleStyle.primaryColor,
-                          outlineColor: activeProfile.subtitleStyle.outlineColor,
-                          backgroundColor: activeProfile.subtitleStyle.backgroundColor,
-                          alignment: activeProfile.subtitleStyle.alignment,
-                        } : undefined;
-
-                        let currentStart = 0;
-                        const clips = segs.map((seg) => {
-                          const clip = createClip(
-                            subTrack.id,
-                            { type: 'subtitle', text: seg.scriptText, style: subStyle },
-                            currentStart,
-                            seg.duration
-                          );
-                          currentStart += seg.duration;
-                          return clip;
-                        });
-                        
-                        const newTracks = project.tracks.map(t => 
-                          t.id === subTrack.id 
-                            ? { ...t, clips } 
-                            : t
-                        );
-                        onProjectUpdate({ tracks: newTracks });
-                      }
+                          onProjectUpdate({ tracks: newTracks, duration: Math.max(project.duration, currentStart) });
+                       }
                     }
 
                     setExpandedStep(4); // Auto-expand Step 5 (Imagens)
                   }}
-                  status={step.status}
                 />
               ) : step.id === PipelineStage.IMAGES ? (
                 <ImagesStep 
                   config={config} 
-                  segments={segments}
+                  scenes={scenes}
                   activeProfile={profiles.find(p => p.id === activeProfileId)}
                   width={project?.resolution?.width}
                   height={project?.resolution?.height}
-                  onImagesGenerated={(updatedSegs) => {
-                    setSegments(updatedSegs);
+                  onImagesGenerated={(newScenes) => {
+                    setScenes([...newScenes]);
                     updateStepStatus(PipelineStage.IMAGES, 'completed');
 
                     // Auto-Place Timeline Logic for Images
@@ -308,23 +250,22 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
                       const videoTrack = project.tracks.find(t => t.type === 'video');
                       if (videoTrack) {
                         let currentStart = 0;
-                        const clips = updatedSegs.map((seg) => {
+                        const clips = newScenes.map((seg) => {
+                          const duration = seg.audioDuration || 5;
                           const clip = createClip(
                             videoTrack.id,
-                            { type: 'image', url: seg.assets?.imageUrl || '' },
+                            { type: 'image', url: seg.imageUrl || '' },
                             currentStart,
-                            seg.duration
+                            duration
                           );
-                          currentStart += seg.duration;
+                          currentStart += duration;
                           return clip;
                         });
 
                         const newTracks = project.tracks.map(t => 
-                          t.id === videoTrack.id 
-                            ? { ...t, clips } 
-                            : t
+                          t.id === videoTrack.id ? { ...t, clips } : t
                         );
-                        onProjectUpdate({ tracks: newTracks });
+                        onProjectUpdate({ tracks: newTracks, duration: Math.max(project.duration, currentStart) });
                       }
                     }
 
@@ -335,9 +276,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
               ) : step.id === PipelineStage.VIDEO ? (
                 <ExportStep 
                   projectId={project?.id || 'manual-editor'}
-                  segments={segments}
-                  audioBytes={audioBytes}
-                  assContent={assContent}
+                  scenes={scenes}
                   activeProfile={profiles.find(p => p.id === activeProfileId)}
                   onExportComplete={(url) => {
                     updateStepStatus(PipelineStage.VIDEO, 'completed');

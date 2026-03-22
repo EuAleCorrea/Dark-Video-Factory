@@ -453,7 +453,7 @@ SAÍDA (JSON STRICT):
             timeRange: '',
             scriptText: chunk.text,
             visualPrompt: '',
-            duration: chunk.durationEstimate,
+            duration: 0,
         }));
 
         // 5. Alinhar com duração real do áudio

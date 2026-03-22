@@ -179,6 +179,11 @@ export interface EngineConfig {
     capcutCache?: string;
     preProcessedMaterials?: string;
   };
+  sceneConfig?: {
+    wordsPerScene: number;     // Padrão: 250
+    maxScenes: number;         // Padrão: 15
+    autoCompress: boolean;     // Padrão: true
+  };
 }
 
 // =============================================
@@ -188,6 +193,7 @@ export interface EngineConfig {
 export enum PipelineStage {
   REFERENCE = 'reference',
   SCRIPT = 'script',
+  SCENES = 'scenes',
   AUDIO = 'audio',
   AUDIO_COMPRESS = 'audio_compress',
   SUBTITLES = 'subtitles',
@@ -200,6 +206,16 @@ export enum PipelineStage {
 
 export type ProjectStatus = 'waiting' | 'processing' | 'ready' | 'error' | 'review';
 
+export interface SceneData {
+  id: number;
+  scriptText: string;
+  visualPrompt: string;
+  audioUrl?: string;
+  audioBytes?: Uint8Array;
+  audioDuration?: number;
+  imageUrl?: string;
+  status: 'pending' | 'generating' | 'done' | 'error';
+}
 export interface ReferenceStageData {
   videoId: string;
   videoUrl?: string;
@@ -237,24 +253,29 @@ export interface AudioStageData {
   mode: 'auto' | 'manual';
 }
 
-export interface AudioCompressStageData {
-  fileUrl: string;
-  originalSize?: number;
-  compressedSize?: number;
-  format?: string;
-  bitrate?: number;
-  duration?: number;
-  compressionRatio?: number;
-  mode: 'auto' | 'manual';
-}
-
 export interface SubtitlesStageData {
   srtContent: string;
-  assContent: string;
-  segments: StoryboardSegment[];
-  segmentCount: number;
-  totalDuration: number;
+  assContent?: string;
+  segments: any[];
+  segmentCount?: number;
+  totalDuration?: number;
   wordCount?: number;
+  mode?: 'auto' | 'manual';
+}
+
+export interface AudioCompressStageData {
+  fileUrl: string;
+  duration?: number;
+  originalSize: number;
+  compressedSize: number;
+  compressionRatio?: number;
+  format: string;
+  bitrate: number;
+  mode?: 'auto' | 'manual';
+}
+
+export interface ScenesStageData {
+  scenes: SceneData[];
   mode: 'auto' | 'manual';
 }
 
@@ -293,6 +314,7 @@ export interface PublishThumbStageData {
 export interface StageDataMap {
   reference?: ReferenceStageData;
   script?: ScriptStageData;
+  scenes?: ScenesStageData;
   audio?: AudioStageData;
   audio_compress?: AudioCompressStageData;
   subtitles?: SubtitlesStageData;
@@ -318,6 +340,7 @@ export interface VideoProject {
 export const PIPELINE_STAGES_ORDER: PipelineStage[] = [
   PipelineStage.REFERENCE,
   PipelineStage.SCRIPT,
+  PipelineStage.SCENES,
   PipelineStage.AUDIO,
   PipelineStage.AUDIO_COMPRESS,
   PipelineStage.SUBTITLES,
@@ -339,9 +362,10 @@ export interface StageMeta {
 export const STAGE_META: Record<PipelineStage, StageMeta> = {
   [PipelineStage.REFERENCE]: { label: 'Referência', shortLabel: 'Ref', icon: 'Search', color: '#6366F1', bgColor: '#EEF2FF' },
   [PipelineStage.SCRIPT]: { label: 'Roteiro', shortLabel: 'Rot', icon: 'FileText', color: '#8B5CF6', bgColor: '#F5F3FF' },
+  [PipelineStage.SCENES]: { label: 'Cenas', shortLabel: 'Cen', icon: 'Layout', color: '#14B8A6', bgColor: '#F0FDFA' },
   [PipelineStage.AUDIO]: { label: 'Áudio', shortLabel: 'Áud', icon: 'Mic', color: '#EC4899', bgColor: '#FDF2F8' },
-  [PipelineStage.AUDIO_COMPRESS]: { label: 'Compactar', shortLabel: 'Comp', icon: 'Archive', color: '#F59E0B', bgColor: '#FFFBEB' },
-  [PipelineStage.SUBTITLES]: { label: 'Legendas', shortLabel: 'Leg', icon: 'Captions', color: '#14B8A6', bgColor: '#F0FDFA' },
+  [PipelineStage.AUDIO_COMPRESS]: { label: 'Compressão', shortLabel: 'Cmp', icon: 'Volume2', color: '#EC4899', bgColor: '#FDF2F8' },
+  [PipelineStage.SUBTITLES]: { label: 'Legendas', shortLabel: 'Leg', icon: 'Subtitles', color: '#8B5CF6', bgColor: '#F5F3FF' },
   [PipelineStage.IMAGES]: { label: 'Imagens', shortLabel: 'Img', icon: 'Image', color: '#F97316', bgColor: '#FFF7ED' },
   [PipelineStage.VIDEO]: { label: 'Vídeo', shortLabel: 'Víd', icon: 'Film', color: '#EF4444', bgColor: '#FEF2F2' },
   [PipelineStage.PUBLISH_YT]: { label: 'Publicar YT', shortLabel: 'PubYT', icon: 'Youtube', color: '#DC2626', bgColor: '#FEF2F2' },

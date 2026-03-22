@@ -55,7 +55,7 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
             id: chunk.id,
             scriptText: chunk.text,
             visualPrompt: '',
-            duration: chunk.durationEstimate,
+            duration: 0,
             timeRange: `00:00 - 00:00`
         }));
 
