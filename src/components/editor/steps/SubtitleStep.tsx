@@ -4,8 +4,10 @@ import { EngineConfig, ChannelProfile, StoryboardSegment, VideoFormat } from '..
 import { generateSrtContent, generateAssContent } from '../../../lib/subtitleGenerator';
 import { smartChunkScript } from '../../../lib/smartChunker';
 import { alignStoryboardToAudio } from '../../../lib/alignmentEngine';
-import { generateVisualPromptsForSegments } from '../../../services/geminiService';
+import { generateVisualPromptsForSegments, transcribeAudio } from '../../../services/geminiService';
 import { getAudioDuration } from '../../../lib/audioUtils';
+import { SubtitleStyleGallery } from '../SubtitleStyleGallery';
+import { SubtitlePreset } from '../../../lib/subtitlePresets';
 
 interface SubtitleStepProps {
   config: EngineConfig;
@@ -29,6 +31,7 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [segments, setSegments] = useState<StoryboardSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [selectedStyle, setSelectedStyle] = useState<SubtitlePreset | null>(null);
 
   const handleGenerate = async () => {
     if (!script) {
@@ -44,23 +47,46 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
     setError(null);
 
     try {
-        // 1. Get audio duration
+        // 1. Get audio duration (still useful for metadata)
         const duration = await getAudioDuration(audioUrl!);
         
-        // 2. Chunk script
-        const chunks = smartChunkScript(script);
-        
-        // 3. Convert to StoryboardSegments
-        const initialSegments: StoryboardSegment[] = chunks.map(chunk => ({
-            id: chunk.id,
-            scriptText: chunk.text,
-            visualPrompt: '',
-            duration: 0,
-            timeRange: `00:00 - 00:00`
-        }));
+        // 2. Convert audio to Base64 for Gemini STT
+        let binary = '';
+        const len = audioBytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(audioBytes[i]);
+        }
+        const base64Audio = window.btoa(binary);
 
-        // 4. Align to actual audio duration
-        const alignedSegments = alignStoryboardToAudio(initialSegments, duration);
+        // 3. Transcribe using Gemini 1.5 Flash
+        const { segments: transcribedSegments } = await transcribeAudio(
+          base64Audio,
+          'audio/wav',
+          config
+        );
+
+        // 4. Convert STT results to StoryboardSegments
+        const sttSegments: StoryboardSegment[] = transcribedSegments.map(s => {
+          const startMin = Math.floor(s.startTime / 60);
+          const startSec = Math.floor(s.startTime % 60);
+          const startMs = Math.floor((s.startTime % 1) * 100);
+          
+          const endMin = Math.floor(s.endTime / 60);
+          const endSec = Math.floor(s.endTime % 60);
+          const endMs = Math.floor((s.endTime % 1) * 100);
+
+          const timeRange = `${String(startMin).padStart(2, '0')}:${String(startSec).padStart(2, '0')}.${String(startMs).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}:${String(endSec).padStart(2, '0')}.${String(endMs).padStart(2, '0')}`;
+
+          return {
+            id: s.id,
+            scriptText: s.scriptText,
+            visualPrompt: '',
+            duration: s.endTime - s.startTime,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            timeRange: timeRange
+          };
+        });
 
         // 5. Generate visual prompts using AI
         const visualStyle = activeProfile?.visualStyle || "cinematic, 8k, detailed, photorealistic";
@@ -68,7 +94,7 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
         const provider = (activeProfile?.scriptingProvider || config.scriptingProvider || 'GEMINI') as 'GEMINI' | 'OPENAI' | 'OPENROUTER';
 
         const visualPromptsRaw = await generateVisualPromptsForSegments(
-            alignedSegments.map(s => ({ id: s.id, scriptText: s.scriptText })),
+            sttSegments.map(s => ({ id: s.id ?? 0, scriptText: s.scriptText })),
             visualStyle,
             modelId,
             provider,
@@ -76,11 +102,11 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
         );
 
         // Merge prompts back
-        const finalSegments: StoryboardSegment[] = alignedSegments.map(seg => {
+        const finalSegments: StoryboardSegment[] = sttSegments.map(seg => {
             const promptObj = visualPromptsRaw.find(p => p.id === seg.id);
             return {
                 ...seg,
-                visualPrompt: promptObj ? promptObj.visualPrompt : "Cinematic scene, detailed atmosphere"
+                visualPrompt: promptObj ? promptObj.visualPrompt : "Cinematic visualization of the scene"
             };
         });
 
@@ -89,7 +115,6 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
         // 6. Generate subtitle files
         const srt = generateSrtContent(finalSegments);
         
-        // use provided profile or create a complete dummy fitting the ChannelProfile interface
         const profileForAss: ChannelProfile = activeProfile || {
             id: 'dummy',
             name: 'Default',
@@ -97,7 +122,7 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
             visualStyle: visualStyle,
             voiceProfile: '',
             bgmTheme: '',
-            subtitleStyle: {
+            subtitleStyle: selectedStyle || {
                 fontName: 'Montserrat ExtraBold',
                 fontSize: 100,
                 primaryColor: '#FFFFFF',
@@ -181,6 +206,13 @@ export const SubtitleStep: React.FC<SubtitleStepProps> = ({
             </>
           )}
         </button>
+      </div>
+
+      <div className="p-4 bg-theme-secondary/10 rounded-xl border border-theme-hover">
+        <SubtitleStyleGallery 
+          selectedStyleId={selectedStyle?.id || activeProfile?.subtitleStyle?.styleId}
+          onSelect={setSelectedStyle}
+        />
       </div>
 
       {error && (

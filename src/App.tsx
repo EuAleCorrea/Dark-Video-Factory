@@ -171,6 +171,17 @@ export default function App() {
         (id) => profilesRef.current.find(p => p.id === id) // Dynamic profile access
       );
 
+      // Set Progress Callback for real-time UI updates
+      pipelineExecutorRef.current.setProgressCallback((projectId, message, stageData) => {
+        setProjects(prev => prev.map(p => 
+          p.id === projectId ? { 
+            ...p, 
+            errorMessage: message,
+            ...(stageData ? { stageData: stageData as any } : {})
+          } : p
+        ));
+      });
+
       // Set Prompt Preview Callback
       pipelineExecutorRef.current.setPromptPreview((data) => {
         return new Promise((resolve) => {
@@ -1185,7 +1196,9 @@ export default function App() {
           project={detailsProject}
           stage={detailsStage}
           config={config}
+          profile={detailsProject ? profiles.find(p => p.id === detailsProject.channelId) || null : null}
           onUpdate={handleUpdateProject}
+          executor={pipelineExecutorRef.current}
         />
 
         {/* PROMPT DEBUG MODAL */}

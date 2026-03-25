@@ -18,7 +18,7 @@ import { ReferenceStep } from './steps/ReferenceStep';
 import { ScriptStep } from './steps/ScriptStep';
 import { ScenesStep } from './steps/ScenesStep';
 import { AudioStep } from './steps/AudioStep';
-import { ImagesStep } from './steps/ImagesStep';
+import { SubtitleStep } from './steps/SubtitleStep';
 import { ExportStep } from './steps/ExportStep';
 import { EditorProject, createClip } from '../../types/editor';
 
@@ -101,15 +101,16 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
     { title: '1. Referência', id: PipelineStage.REFERENCE, icon: Video, status: 'pending', label: 'Encontre o vídeo âncora' },
     { title: '2. Roteiro', id: PipelineStage.SCRIPT, icon: FileText, status: 'pending', label: 'Reescreva a narrativa' },
     { title: '3. Cenas', id: PipelineStage.SCENES, icon: Layout, status: 'pending', label: 'Divida em cenas e crie prompts' },
-    { title: '4. Áudio', id: PipelineStage.AUDIO, icon: Music, status: 'pending', label: 'Gere narração de alta qualidade' },
-    { title: '5. Imagens', id: PipelineStage.IMAGES, icon: ImageIcon, status: 'pending', label: 'Crie visuais magníficos' },
+    { title: '4. Audio e Imagem', id: PipelineStage.AUDIO, icon: Music, status: 'pending', label: 'Gere narração e imagens das cenas' },
+    { title: '5. Legendas', id: PipelineStage.SUBTITLES, icon: Type, status: 'pending', label: 'Transcreva e estilize suas legendas' },
     { title: '6. Exportar', id: PipelineStage.VIDEO, icon: Share2, status: 'pending', label: 'Renderize no Remotion' }
   ]);
 
-  const [transcript, setTranscript] = useState('');
+  const [transcript, setTranscript] = useState<string>('');
   const [rewrittenScript, setRewrittenScript] = useState('');
   const [metadata, setMetadata] = useState<any>(null);
   const [scenes, setScenes] = useState<SceneData[]>([]);
+  const [subtitleSegments, setSubtitleSegments] = useState<any[]>([]);
 
 
   const handleToggle = (idx: number) => {
@@ -204,7 +205,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
                 <AudioStep 
                   config={config} 
                   scenes={scenes}
-                  onAudioGenerated={async (newScenes) => {
+                   onAudioGenerated={async (newScenes: SceneData[]) => {
                     setScenes([...newScenes]);
                     updateStepStatus(PipelineStage.AUDIO, 'completed');
                     
@@ -213,7 +214,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
                        const audioTrack = project.tracks.find(t => t.type === 'audio');
                        if (audioTrack) {
                           let currentStart = 0;
-                          const clips = newScenes.filter(s => s.audioUrl).map(seg => {
+                          const clips = newScenes.filter((s: SceneData) => !!s.audioUrl).map((seg: SceneData) => {
                             const clip = createClip(
                                audioTrack.id,
                                { type: 'audio', url: seg.audioUrl!, waveform: [] },
@@ -231,54 +232,30 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ config, project, o
                        }
                     }
 
-                    setExpandedStep(4); // Auto-expand Step 5 (Imagens)
+                    setExpandedStep(4); // Auto-expand Step 5 (Legendas)
                   }}
                 />
-              ) : step.id === PipelineStage.IMAGES ? (
-                <ImagesStep 
-                  config={config} 
-                  scenes={scenes}
+              ) : step.id === PipelineStage.SUBTITLES ? (
+                <SubtitleStep 
+                  config={config}
+                  script={rewrittenScript}
+                  audioUrl={scenes.find(s => !!s.audioUrl)?.audioUrl} // Simple heuristic for now, take first scene audio or merge
+                  audioBytes={scenes.find(s => !!s.audioBytes)?.audioBytes}
                   activeProfile={profiles.find(p => p.id === activeProfileId)}
-                  width={project?.resolution?.width}
-                  height={project?.resolution?.height}
-                  onImagesGenerated={(newScenes) => {
-                    setScenes([...newScenes]);
-                    updateStepStatus(PipelineStage.IMAGES, 'completed');
-
-                    // Auto-Place Timeline Logic for Images
-                    if (project && onProjectUpdate) {
-                      const videoTrack = project.tracks.find(t => t.type === 'video');
-                      if (videoTrack) {
-                        let currentStart = 0;
-                        const clips = newScenes.map((seg) => {
-                          const duration = seg.audioDuration || 5;
-                          const clip = createClip(
-                            videoTrack.id,
-                            { type: 'image', url: seg.imageUrl || '' },
-                            currentStart,
-                            duration
-                          );
-                          currentStart += duration;
-                          return clip;
-                        });
-
-                        const newTracks = project.tracks.map(t => 
-                          t.id === videoTrack.id ? { ...t, clips } : t
-                        );
-                        onProjectUpdate({ tracks: newTracks, duration: Math.max(project.duration, currentStart) });
-                      }
-                    }
-
+                  status={step.status}
+                  onSubtitlesGenerated={(srt, ass, segments) => {
+                    setSubtitleSegments(segments);
+                    updateStepStatus(PipelineStage.SUBTITLES, 'completed');
                     setExpandedStep(5); // Auto-expand Step 6 (Exportar)
                   }}
-                  status={step.status}
                 />
               ) : step.id === PipelineStage.VIDEO ? (
                 <ExportStep 
                   projectId={project?.id || 'manual-editor'}
                   scenes={scenes}
+                  subtitleSegments={subtitleSegments}
                   activeProfile={profiles.find(p => p.id === activeProfileId)}
-                  onExportComplete={(url) => {
+                  onExportComplete={(url: string) => {
                     updateStepStatus(PipelineStage.VIDEO, 'completed');
                     // Aqui poderia abrir o modal de sucesso ou player
                   }}

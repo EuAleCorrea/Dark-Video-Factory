@@ -117,7 +117,7 @@ export class ProjectService {
             if (updates.currentStage !== undefined) dbUpdates.current_stage = updates.currentStage;
             if (updates.status !== undefined) dbUpdates.status = updates.status;
             if (updates.stageData !== undefined) dbUpdates.stage_data = updates.stageData;
-            if (updates.errorMessage !== undefined) dbUpdates.error_message = updates.errorMessage;
+            // errorMessage é salvo apenas localmente (coluna não existe no Supabase)
 
             const { error } = await getSupabase().from(TABLE).update(dbUpdates).eq('id', id);
             if (error) {

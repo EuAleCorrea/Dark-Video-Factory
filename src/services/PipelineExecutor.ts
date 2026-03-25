@@ -1,11 +1,13 @@
 
 import { VideoProject, PipelineStage, EngineConfig, VideoFormat, ScriptGenerationSnapshot } from "../types";
 import { ProjectService } from "./ProjectService";
-import { generateVideoScriptAndPrompts, rewriteTranscript, structureScript, generateSpeech } from "./geminiService";
+import { generateVideoScriptAndPrompts, rewriteTranscript, structureScript, generateSpeech, generateVisualPromptsForSegments } from "./geminiService";
 import { PersistenceService } from "./PersistenceService";
 import { ChannelProfile, StageDataMap } from "../types";
 import { pcmToWav, getAudioDuration } from "../lib/audioUtils";
-import { saveAudio } from "./AudioStorageService";
+import { saveAudio, saveSceneAudio, mergeProjectAudio } from "./AudioStorageService";
+import { saveSceneImage } from "./ImageStorageService";
+import { getImageProvider, IMAGE_MODELS } from "./imageProviders";
 import { compressProjectAudio } from "./AudioCompressService";
 import { smartChunkScript } from "../lib/smartChunker";
 import { alignStoryboardToAudio } from "../lib/alignmentEngine";
@@ -13,6 +15,7 @@ import { generateAssContent } from "../lib/subtitleGenerator";
 import { StoryboardSegment } from "../types";
 import { planStoryboard } from "./storyboardPlanner";
 import { renderProjectVideo } from "./VideoRenderService";
+import { ElevenLabsService } from "./ElevenLabsService";
 
 export interface PromptPreviewRequest {
     stage: 'P1' | 'P2';
@@ -27,6 +30,7 @@ export interface PromptPreviewRequest {
 
 export class PipelineExecutor {
     private onPromptPreview: ((data: PromptPreviewRequest) => Promise<boolean>) | null = null;
+    private onProgress: ((projectId: string, message: string, stageData?: Record<string, any>) => void) | null = null;
 
     constructor(
         private projectService: ProjectService,
@@ -34,6 +38,11 @@ export class PipelineExecutor {
         private getConfig: () => EngineConfig,
         private getProfile: (channelId: string) => ChannelProfile | undefined
     ) { }
+
+    /** Registra callback para atualizar progresso na UI */
+    setProgressCallback(cb: ((projectId: string, message: string, stageData?: Record<string, any>) => void) | null) {
+        this.onProgress = cb;
+    }
 
     /** Registra callback para debug visual de prompts. Retorna true=prosseguir, false=cancelar */
     setPromptPreview(cb: ((data: PromptPreviewRequest) => Promise<boolean>) | null) {
@@ -56,14 +65,20 @@ export class PipelineExecutor {
                     return await this.processReferenceStage(project, config);
                 case PipelineStage.SCRIPT:
                     return await this.processScriptStage(project, profile, config);
+                case PipelineStage.SCENES:
+                    return await this.processScenesStage(project, profile, config);
                 case PipelineStage.AUDIO:
                     return await this.processAudioStage(project, profile, config);
                 case PipelineStage.AUDIO_COMPRESS:
-                    return await this.processAudioCompressStage(project);
+                    // Estágio removido/obsoleto. Avança direto para o próximo disponível (SUBTITLES).
+                    console.log("[Pipeline] Estágio AUDIO_COMPRESS detectado. Pulando para SUBTITLES...");
+                    return await this.projectService.advanceStage(project, {});
                 case PipelineStage.SUBTITLES:
                     return await this.processSubtitlesStage(project, profile);
                 case PipelineStage.IMAGES:
-                    return await this.processImagesStage(project, profile);
+                    // Estágio removido/obsoleto. Avança direto para o próximo disponível (VÍDEO).
+                    console.log("[Pipeline] Estágio IMAGES detectado. Pulando para VÍDEO...");
+                    return await this.projectService.advanceStage(project, {});
                 case PipelineStage.VIDEO:
                     return await this.processVideoStage(project, profile);
                 default:
@@ -92,6 +107,9 @@ export class PipelineExecutor {
                 status: "error",
                 errorMessage: finalMessage,
             });
+
+            // Re-throw para que o App.tsx capture e atualize o React state
+            throw new Error(finalMessage);
         }
     }
 
@@ -313,68 +331,429 @@ SAÍDA (JSON STRICT):
     }
 
     /**
-     * ÁUDIO — Geração TTS
-     * 1. Lê o roteiro do P1 (script.text)
-     * 2. Usa a voz configurada no perfil do canal
-     * 3. Gera via Gemini TTS com retry
-     * 4. Converte base64 PCM → WAV
-     * 5. Calcula duração e avança estágio
+     * CENAS — Divisão do roteiro longo em blocos e criação de prompts independentes
+     */
+    private async processScenesStage(
+        project: VideoProject,
+        profile: ChannelProfile,
+        config: EngineConfig
+    ): Promise<VideoProject> {
+        console.log(`[Pipeline] ====== CENAS — Chunking & Visual Prompts ======`);
+
+        const scriptData = project.stageData.script;
+        if (!scriptData?.text) {
+            throw new Error("Roteiro não encontrado no estágio inicial. Volte e processe o roteiro.");
+        }
+
+        const wordsPerScene = config.sceneConfig?.wordsPerScene || 250;
+        const maxScenes = config.sceneConfig?.maxScenes || 15;
+
+        // 1. Chunking
+        const chunks = smartChunkScript(scriptData.text, wordsPerScene, maxScenes);
+        console.log(`[Pipeline] Roteiro dividido em ${chunks.length} cenas configuradas.`);
+
+        // 2. Setup initial scenes
+        const initialScenesData = chunks.map(chunk => ({
+            id: chunk.id,
+            scriptText: chunk.text,
+            visualPrompt: '',
+            status: 'pending' as const
+        }));
+
+        // 3. Generate prompts via IA
+        const visualStyle = profile.visualStyle || "cinematic, 8k, detailed, photorealistic";
+        const modelId = profile.scriptingModel || config.scriptingModel || 'gemini-2.0-flash-exp';
+        const provider = (profile.scriptingProvider || config.scriptingProvider || 'GEMINI') as 'GEMINI' | 'OPENAI' | 'OPENROUTER';
+
+        console.log(`[Pipeline] Gerando prompts visuais com IA (${provider}/${modelId})...`);
+
+        const visualPromptsRaw = await generateVisualPromptsForSegments(
+            initialScenesData.map(s => ({ id: s.id, scriptText: s.scriptText })),
+            visualStyle,
+            modelId,
+            provider,
+            config
+        );
+
+        // 4. Consolidar os dados
+        const finalScenes = initialScenesData.map(scene => {
+            const promptObj = visualPromptsRaw.find(p => p.id === scene.id);
+            return {
+                ...scene,
+                visualPrompt: promptObj ? promptObj.visualPrompt : "Cinematic scene, detailed atmosphere"
+            };
+        });
+
+        const scenesData = {
+            scenes: finalScenes,
+            mode: 'auto' as const
+        };
+
+        // 5. Update Project Stage Data e advance
+        console.log(`[Pipeline] ✅ Cenas geradas com sucesso. Avançando de Cenas para Áudio...`);
+        return await this.projectService.advanceStage(project, { scenes: scenesData });
+    }
+
+    /**
+     * ÁUDIO — Processa uma ÚNICA cena individualmente
+     * Isso permite que a UI gere o áudio de uma cena sob demanda
+     */
+    public async processSingleSceneAudio(
+        project: VideoProject,
+        sceneId: number,
+        profile: ChannelProfile,
+        config: EngineConfig,
+        audioOverride?: { provider: 'google' | 'elevenlabs', voiceId: string }
+    ): Promise<VideoProject> {
+        const provider = audioOverride?.provider || config.providers.tts || 'google';
+        const voiceId = audioOverride?.voiceId || profile.voiceProfile || 'Kore';
+        const scenesData = project.stageData.scenes;
+
+        if (!scenesData?.scenes || scenesData.scenes.length === 0) {
+            throw new Error(`Dados de cena estruturada não encontrados para a cena ${sceneId}.`);
+        }
+
+        const sceneIndex = scenesData.scenes.findIndex(s => s.id === sceneId);
+        if (sceneIndex === -1) {
+            throw new Error(`Cena com ID ${sceneId} não encontrada no projeto.`);
+        }
+
+        const scene = scenesData.scenes[sceneIndex];
+        const updatedScenes = [...scenesData.scenes];
+
+        console.log(`[Pipeline] ====== ÁUDIO — TTS por Cena Única (ID: ${scene.id}, Provider: ${provider}, Voz: ${voiceId}) ======`);
+
+        // Atualizar status na memória/UI temporariamente
+        updatedScenes[sceneIndex] = { ...scene, status: 'generating' };
+        if (this.onProgress) {
+            this.onProgress(project.id, `Gerando áudio da Cena ${sceneId}`, {
+                ...project.stageData,
+                scenes: { ...scenesData, scenes: updatedScenes }
+            });
+        }
+
+        try {
+            let wavData: Uint8Array;
+            let duration: number | undefined;
+
+            if (provider === 'elevenlabs') {
+                const apiKey = config.apiKeys.elevenLabs;
+                if (!apiKey) throw new Error("API Key do ElevenLabs não configurada.");
+                
+                const elevenService = new ElevenLabsService(apiKey);
+                const blob = await elevenService.generateAudio(
+                    voiceId, 
+                    scene.scriptText, 
+                    'eleven_multilingual_v2'
+                );
+                
+                wavData = new Uint8Array(await blob.arrayBuffer());
+                const blobUrl = URL.createObjectURL(blob);
+                try {
+                    duration = await getAudioDuration(blobUrl);
+                    console.log(`[Pipeline]   ✅ ElevenLabs: ${duration.toFixed(1)}s de duração`);
+                } catch (e) {
+                    console.warn(`[Pipeline]   ⚠️ Duração não calculada para cena ${scene.id}`);
+                }
+            } else {
+                // Google TTS fallback/padrão
+                const base64Pcm = await generateSpeech(scene.scriptText, voiceId, config);
+                if (!base64Pcm) {
+                    throw new Error(`Resposta vazia do TTS para cena ${scene.id}`);
+                }
+
+                const blobUrl = pcmToWav(base64Pcm);
+                try {
+                    duration = await getAudioDuration(blobUrl);
+                    console.log(`[Pipeline]   ✅ Google TTS: ${duration.toFixed(1)}s de duração`);
+                } catch (e) {
+                    console.warn(`[Pipeline]   ⚠️ Duração não calculada para cena ${scene.id}`);
+                }
+
+                const blobResponse = await fetch(blobUrl);
+                wavData = new Uint8Array(await blobResponse.arrayBuffer());
+            }
+
+            await saveSceneAudio(project.id, scene.id, wavData);
+
+            updatedScenes[sceneIndex] = {
+                ...scene,
+                audioUrl: `disk://${project.id}/scenes/scene_${scene.id}.wav`,
+                audioDuration: duration,
+                status: 'done'
+            };
+
+            const updatedProject = {
+                ...project,
+                stageData: {
+                    ...project.stageData,
+                    scenes: { ...scenesData, scenes: updatedScenes }
+                }
+            };
+
+            // Salva silenciosamente o projeto atualizado no banco, SEM AVANÇAR o stageData inteiro
+            await this.projectService.updateProject(project.id, { stageData: updatedProject.stageData });
+
+            // Atualiza a cena como 'done' na UI
+            if (this.onProgress) {
+                this.onProgress(project.id, `Cena ${sceneId} concluída`, updatedProject.stageData);
+            }
+
+            return updatedProject;
+        } catch (err: any) {
+            console.error(`[Pipeline]   ❌ Falha na cena ${scene.id}:`, err.message);
+            updatedScenes[sceneIndex] = { ...scene, status: 'error' };
+
+            // Restaura estado de erro para a UI
+            if (this.onProgress) {
+                this.onProgress(project.id, `Erro na Cena ${sceneId}`, {
+                    ...project.stageData,
+                    scenes: { ...scenesData, scenes: updatedScenes }
+                });
+            }
+
+            throw err;
+        }
+    }
+
+    /**
+     * IMAGENS — Processa uma ÚNICA imagem de cena
+     */
+    public async processSingleSceneImage(
+        project: VideoProject,
+        sceneId: number,
+        profile: ChannelProfile,
+        config: EngineConfig,
+        imageOverride?: { modelId: string }
+    ): Promise<VideoProject> {
+        const scenesData = project.stageData.scenes;
+        if (!scenesData?.scenes) throw new Error("Cenas não encontradas.");
+
+        const modelId = imageOverride?.modelId || config.providers.image || 'FLUX';
+        const sceneIndex = scenesData.scenes.findIndex(s => s.id === sceneId);
+        if (sceneIndex === -1) throw new Error(`Cena ${sceneId} não encontrada.`);
+
+        const scene = scenesData.scenes[sceneIndex];
+        const updatedScenes = [...scenesData.scenes];
+
+        console.log(`[Pipeline] ====== IMAGENS — Geração por Cena Única (ID: ${scene.id}, Modelo: ${modelId}) ======`);
+
+        updatedScenes[sceneIndex] = { ...scene, status: 'generating' };
+        if (this.onProgress) {
+            this.onProgress(project.id, `Gerando imagem da Cena ${sceneId}`, {
+                ...project.stageData,
+                scenes: { ...scenesData, scenes: updatedScenes }
+            });
+        }
+
+        try {
+            const provider = getImageProvider(modelId);
+            const modelInfo = (IMAGE_MODELS as any[]).find(m => m.id === modelId);
+            const apiKey = config.apiKeys[modelInfo?.apiKeyField as keyof EngineConfig['apiKeys'] || 'flux'];
+            
+            if (!apiKey) throw new Error(`Chave de API para o modelo ${modelId} não configurada.`);
+
+            // Resolução baseada no formato do projeto (VideoFormat)
+            let width = 1024;
+            let height = 1024;
+            if (profile.format === VideoFormat.LONG_FORM) {
+                width = 1792; height = 1024;
+            } else if (profile.format === VideoFormat.SHORTS) {
+                width = 1024; height = 1792;
+            }
+
+            const result = await provider.generate(scene.visualPrompt, width, height, 1, apiKey);
+            if (!result.urls || result.urls.length === 0) {
+                throw new Error("Nenhuma imagem gerada pelo provider.");
+            }
+
+            const imageUrl = result.urls[0];
+            await saveSceneImage(project.id, scene.id, imageUrl);
+
+            updatedScenes[sceneIndex] = {
+                ...scene,
+                imageUrl: `disk://${project.id}/scenes/scene_${scene.id}.png`,
+                status: 'done'
+            };
+
+            const updatedProject = {
+                ...project,
+                stageData: {
+                    ...project.stageData,
+                    scenes: { ...scenesData, scenes: updatedScenes }
+                }
+            };
+
+            await this.projectService.updateProject(project.id, { stageData: updatedProject.stageData });
+
+            if (this.onProgress) {
+                this.onProgress(project.id, `Cena ${sceneId} (Imagem) concluída`, updatedProject.stageData);
+            }
+
+            return updatedProject;
+        } catch (err: any) {
+            console.error(`[Pipeline]   ❌ Falha na imagem da cena ${scene.id}:`, err.message);
+            updatedScenes[sceneIndex] = { ...scene, status: 'error' };
+            if (this.onProgress) {
+                this.onProgress(project.id, `Erro na Imagem da Cena ${sceneId}`, {
+                    ...project.stageData,
+                    scenes: { ...scenesData, scenes: updatedScenes }
+                });
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * ÁUDIO — Geração TTS (por cena ou roteiro completo)
+     * Se cenas existem: gera áudio individualmente por cena (~250 palavras)
+     * Se não: fallback para roteiro inteiro (legado)
      */
     private async processAudioStage(
         project: VideoProject,
         profile: ChannelProfile,
         config: EngineConfig
     ): Promise<VideoProject> {
-        const scriptData = project.stageData.script;
-        if (!scriptData?.text) {
-            throw new Error("Roteiro não encontrado. Volte ao estágio Roteiro e processe novamente.");
-        }
-
         const voiceId = profile.voiceProfile || 'Kore';
-        console.log(`[Pipeline] ====== ÁUDIO — TTS com voz ${voiceId} ======`);
-        console.log(`[Pipeline] Texto: ${scriptData.text.length} caracteres, ~${scriptData.wordCount} palavras`);
+        const scenesData = project.stageData.scenes;
+        console.log(`[Pipeline] 🔍 stageData.scenes encontrado: ${scenesData?.scenes?.length || 0} cenas`);
 
-        // Gerar áudio via Gemini TTS (com retry automático)
-        const base64Pcm = await generateSpeech(scriptData.text, voiceId, config);
-        if (!base64Pcm) {
-            throw new Error("Falha na geração de áudio: resposta vazia do TTS.");
+        // ══════════════════════════════════════════════
+        // MODO CENAS: Gerar áudio individualmente por cena
+        // ══════════════════════════════════════════════
+        if (scenesData?.scenes && scenesData.scenes.length > 0) {
+            const scenes = scenesData.scenes;
+            console.log(`[Pipeline] ====== ÁUDIO — TTS por Cena (${scenes.length} cenas, voz: ${voiceId}) ======`);
+
+            const updatedScenes = [...scenes];
+            let totalDuration = 0;
+
+            for (let i = 0; i < updatedScenes.length; i++) {
+                const scene = updatedScenes[i];
+                const wordCount = scene.scriptText.split(/\s+/).length;
+                console.log(`[Pipeline] 🎙️ Cena ${scene.id}/${scenes.length} (${wordCount} palavras)...`);
+
+                // Atualizar progresso na UI via callback
+                updatedScenes[i] = { ...scene, status: 'generating' };
+                const progressMsg = `Áudio ${i + 1}/${scenes.length}`;
+                if (this.onProgress) {
+                    this.onProgress(project.id, progressMsg, {
+                        ...project.stageData,
+                        scenes: { ...scenesData, scenes: updatedScenes }
+                    });
+                }
+                
+                await this.projectService.updateProject(project.id, {
+                    errorMessage: progressMsg
+                }).catch(() => {});
+
+                // Delay entre cenas para evitar rate limit do TTS (429)
+                if (i > 0) {
+                    console.log(`[Pipeline]   ⏳ Aguardando 3s (rate limit)...`);
+                    await new Promise(r => setTimeout(r, 3000));
+                }
+
+                try {
+                    const base64Pcm = await generateSpeech(scene.scriptText, voiceId, config);
+                    if (!base64Pcm) {
+                        throw new Error(`Resposta vazia do TTS para cena ${scene.id}`);
+                    }
+
+                    const blobUrl = pcmToWav(base64Pcm);
+                    let duration: number | undefined;
+                    try {
+                        duration = await getAudioDuration(blobUrl);
+                        totalDuration += duration || 0;
+                        console.log(`[Pipeline]   ✅ ${duration.toFixed(1)}s de duração`);
+                    } catch (e) {
+                        console.warn(`[Pipeline]   ⚠️ Duração não calculada para cena ${scene.id}`);
+                    }
+
+                    // Salvar áudio da cena no disco
+                    const blobResponse = await fetch(blobUrl);
+                    const wavData = new Uint8Array(await blobResponse.arrayBuffer());
+                    await saveSceneAudio(project.id, scene.id, wavData);
+
+                    updatedScenes[i] = {
+                        ...scene,
+                        audioUrl: `disk://${project.id}/scenes/scene_${scene.id}.wav`,
+                        audioDuration: duration,
+                        status: 'done'
+                    };
+
+                    // Atualiza a cena como 'done' na UI
+                    if (this.onProgress) {
+                        this.onProgress(project.id, progressMsg, {
+                            ...project.stageData,
+                            scenes: { ...scenesData, scenes: updatedScenes }
+                        });
+                    }
+                } catch (err: any) {
+                    console.error(`[Pipeline]   ❌ Falha na cena ${scene.id}:`, err.message);
+                    updatedScenes[i] = { ...scene, status: 'error' };
+                    throw new Error(`Falha no TTS para cena ${scene.id}: ${err.message}`);
+                }
+            }
+
+            console.log(`[Pipeline] ✅ Todos os ${scenes.length} áudios gerados. Duração total: ${totalDuration.toFixed(1)}s`);
+
+            // ══════════════════════════════════════════════
+            // NOVO: Consolidar áudios individuais em um mestre
+            // ══════════════════════════════════════════════
+            console.log(`[Pipeline] 🔀 Consolidando áudios das cenas em um único arquivo mestre...`);
+            try {
+                await mergeProjectAudio(project.id);
+            } catch (mergeErr: any) {
+                console.warn(`[Pipeline] ⚠️ Falha na consolidação de áudio: ${mergeErr.message}. A próxima etapa pode falhar.`);
+            }
+
+            // ══════════════════════════════════════════════
+            // NOVO: Compactar Áudio Automaticamente
+            // ══════════════════════════════════════════════
+            console.log(`[Pipeline] ⚙️ Iniciando compactação automática para MP3...`);
+            let compressData: any = undefined;
+            try {
+                const result = await compressProjectAudio(project.id, (msg) => {
+                    console.log(`[Pipeline] [Compress] ${msg}`);
+                });
+                compressData = {
+                    fileUrl: `disk://${result.compressedKey}`,
+                    originalSize: result.originalSize,
+                    compressedSize: result.compressedSize,
+                    compressionRatio: result.compressionRatio,
+                    format: result.format,
+                    bitrate: result.bitrate,
+                    duration: totalDuration,
+                    mode: 'auto',
+                };
+                console.log(`[Pipeline] ✅ Compactação concluída: ${result.compressionRatio}% redução`);
+            } catch (err: any) {
+                console.warn(`[Pipeline] ⚠️ Falha na compactação automática: ${err.message}. Continuando com áudio raw.`);
+            }
+
+            // Limpar mensagem de progresso
+            await this.projectService.updateProject(project.id, { errorMessage: '' });
+
+            // Salvar cenas atualizadas + dados de áudio + compressão e avançar PARA LEGENDAS
+            const audioData: StageDataMap['audio'] = {
+                fileUrl: `disk://${project.id}/scenes`,
+                duration: totalDuration,
+                provider: config.providers.tts || 'GEMINI',
+                mode: 'auto',
+            };
+
+            return await this.projectService.advanceStage(project, {
+                scenes: { ...scenesData, scenes: updatedScenes },
+                audio: audioData,
+                audio_compress: compressData
+            });
         }
 
-        // Converter para WAV blob URL (para calcular duração)
-        const blobUrl = pcmToWav(base64Pcm);
-
-        // Calcular duração do áudio
-        let duration: number | undefined;
-        try {
-            duration = await getAudioDuration(blobUrl);
-            console.log(`[Pipeline] ✅ Áudio gerado: ${duration.toFixed(1)}s de duração`);
-        } catch (e) {
-            console.warn('[Pipeline] Não foi possível calcular duração do áudio:', e);
-        }
-
-        // Converter PCM para WAV Uint8Array e salvar no disco
-        const binaryString = atob(base64Pcm);
-        const pcmBytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            pcmBytes[i] = binaryString.charCodeAt(i);
-        }
-        // Reutilizamos a lógica de header WAV do pcmToWav, mas precisamos do Uint8Array raw
-        // Para simplificar, vamos buscar o blob do blobUrl e salvar
-        const blobResponse = await fetch(blobUrl);
-        const wavArrayBuffer = await blobResponse.arrayBuffer();
-        const wavData = new Uint8Array(wavArrayBuffer);
-        await saveAudio(project.id, wavData);
-        console.log(`[Pipeline] 💾 Áudio salvo no disco (${(wavData.length / 1024).toFixed(0)} KB)`);
-
-        const audioData: StageDataMap['audio'] = {
-            fileUrl: `disk://${project.id}`,
-            duration,
-            provider: config.providers.tts || 'GEMINI',
-            mode: 'auto',
-        };
-
-        return await this.projectService.advanceStage(project, { audio: audioData });
+        // Se chegou até aqui, é porque nenhuma cena existia para gerar os áudios individuais.
+        // O modo de legacy (roteiro todo num único wav) FOI REMOVIDO para este projeto.
+        throw new Error("Nenhum dado de cena estruturada encontrado (stageData.scenes vazio / indefinido). Para gerar áudio sincronizado corretamente, por favor VOLTE ao estágio de Cenas e processe novamente antes de avançar para Áudio.");
     }
+
 
     /**
      * COMPACTAR ÁUDIO — FFmpeg WAV → MP3
@@ -447,17 +826,32 @@ SAÍDA (JSON STRICT):
         const chunks = smartChunkScript(scriptData.text);
         console.log(`[Pipeline] 🧩 Smart Chunker: ${chunks.length} segmentos criados`);
 
-        // 4. Converter chunks para StoryboardSegments
-        const rawSegments: StoryboardSegment[] = chunks.map(chunk => ({
-            id: chunk.id,
-            timeRange: '',
-            scriptText: chunk.text,
-            visualPrompt: '',
-            duration: 0,
-        }));
+        // 4. Converter chunks para StoryboardSegments e mapear para Cena correspondente
+        const scenes = project.stageData.scenes?.scenes || [];
+        const alignedSegments: StoryboardSegment[] = chunks.map(chunk => {
+            // Tenta encontrar a cena que contém o início do texto deste chunk
+            // Como ambos são extraídos do mesmo script original, a ordem deve bater.
+            // Simplified: Encontra cena cujo texto contém este fragmento ou vice-versa.
+            const matchingScene = scenes.find(s => 
+                s.scriptText.includes(chunk.text.substring(0, 30)) || 
+                chunk.text.includes(s.scriptText.substring(0, 30))
+            );
+
+            return {
+                id: chunk.id,
+                sceneId: matchingScene?.id,
+                timeRange: '',
+                scriptText: chunk.text,
+                visualPrompt: matchingScene?.visualPrompt || '',
+                duration: 0,
+                assets: {
+                    imageUrl: matchingScene?.imageUrl || ''
+                }
+            };
+        });
 
         // 5. Alinhar com duração real do áudio
-        const alignedSegments = alignStoryboardToAudio(rawSegments, audioDuration);
+        const finalSegments = alignStoryboardToAudio(alignedSegments, audioDuration);
         console.log(`[Pipeline] 🎯 Segmentos alinhados com áudio (${audioDuration.toFixed(1)}s total)`);
 
         alignedSegments.forEach(seg => {
@@ -465,22 +859,32 @@ SAÍDA (JSON STRICT):
         });
 
         // 6. Gerar conteúdo ASS
-        const assContent = generateAssContent(alignedSegments, profile);
+        const assContent = generateAssContent(finalSegments, profile);
         console.log(`[Pipeline] 📄 Conteúdo ASS gerado: ${assContent.length} chars`);
 
         // 7. Salvar e avançar
         const subtitlesData: StageDataMap['subtitles'] = {
             srtContent: '',
             assContent,
-            segments: alignedSegments,
-            segmentCount: alignedSegments.length,
+            segments: finalSegments,
+            segmentCount: finalSegments.length,
             totalDuration: audioDuration,
             wordCount: scriptData.wordCount,
             mode: 'auto',
         };
 
-        console.log(`[Pipeline] ✅ Legendas geradas: ${alignedSegments.length} segmentos, ${audioDuration.toFixed(1)}s`);
-        return await this.projectService.advanceStage(project, { subtitles: subtitlesData });
+        console.log(`[Pipeline] ✅ Legendas geradas: ${finalSegments.length} segmentos, ${audioDuration.toFixed(1)}s`);
+        // Agora o status vira 'review' para o usuário conferir a exportação/sincronia
+        await this.projectService.updateProject(project.id, { 
+            status: 'review',
+            stageData: { ...project.stageData, subtitles: subtitlesData }
+        });
+        
+        return {
+            ...project,
+            status: 'review',
+            stageData: { ...project.stageData, subtitles: subtitlesData }
+        };
     }
 
     /**

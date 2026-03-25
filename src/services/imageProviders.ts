@@ -48,7 +48,7 @@ export interface ImageModel {
 export const IMAGE_MODELS: ImageModel[] = [
     // ─── RunWare ───
     {
-        id: 'FLUX.1',
+        id: 'FLUX',
         label: 'FLUX.1 Schnell',
         provider: 'runware',
         apiKeyField: 'flux',
@@ -57,7 +57,7 @@ export const IMAGE_MODELS: ImageModel[] = [
         description: 'Geração ultrarrápida (4 steps) via RunWare API',
     },
     {
-        id: 'Nano Banana',
+        id: 'NANO_BANANA',
         label: 'Nano Banana (Gemini 2.5)',
         provider: 'nanoBananaRunware',
         apiKeyField: 'flux',
@@ -66,7 +66,7 @@ export const IMAGE_MODELS: ImageModel[] = [
         description: 'Google Gemini 2.5 Flash Image via RunWare (google:4@2)',
     },
     {
-        id: 'Ideogram',
+        id: 'IDEOGRAM',
         label: 'Ideogram',
         provider: 'ideogramRunware',
         apiKeyField: 'flux',
@@ -76,8 +76,8 @@ export const IMAGE_MODELS: ImageModel[] = [
     },
     // ─── Together.ai ───
     {
-        id: 'FLUX.1-Together',
-        label: 'FLUX.1 Schnell',
+        id: 'TOGETHER',
+        label: 'FLUX.1 Schnell (Together)',
         provider: 'together',
         apiKeyField: 'together',
         providerGroup: 'Together.ai',

@@ -25,6 +25,7 @@ import { invoke } from '@tauri-apps/api/core';
 interface ExportStepProps {
   projectId: string;
   scenes: SceneData[];
+  subtitleSegments?: any[];
   activeProfile?: ChannelProfile;
   onExportComplete: (videoUrl: string) => void;
   status: 'pending' | 'processing' | 'completed' | 'error';
@@ -33,6 +34,7 @@ interface ExportStepProps {
 export const ExportStep: React.FC<ExportStepProps> = ({ 
   projectId, 
   scenes, 
+  subtitleSegments,
   activeProfile, 
   onExportComplete,
   status: parentStatus 
@@ -155,6 +157,8 @@ export const ExportStep: React.FC<ExportStepProps> = ({
         format: isVertical ? 'vertical' : 'horizontal',
         transitionDuration,
         kenBurnsEnabled: true,
+        subtitleConfig: activeProfile?.subtitleStyle,
+        subtitleSegments: subtitleSegments || [],
       };
 
       addLog(`🎬 Props: ${scenes.length} cenas configuradas. Duração total: ${effectiveDuration.toFixed(1)}s`);

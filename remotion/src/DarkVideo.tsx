@@ -11,6 +11,7 @@ import { Audio } from "@remotion/media";
 import { TransitionSeries, linearTiming } from "@remotion/transitions";
 import { fade } from "@remotion/transitions/fade";
 import { z } from "zod";
+import { CaptionsRenderer } from "./components/CaptionsRenderer";
 
 // ─── Schema (para validação via CLI e ExportStep) ────────────
 
@@ -27,6 +28,23 @@ export const darkVideoSchema = z.object({
   format: z.enum(["vertical", "horizontal"]),
   transitionDuration: z.number().default(15),
   kenBurnsEnabled: z.boolean().default(true),
+  subtitleConfig: z.object({
+    styleId: z.string().optional(),
+    fontName: z.string(),
+    fontSize: z.number(),
+    primaryColor: z.string(),
+    outlineColor: z.string(),
+    backgroundColor: z.string(),
+    alignment: z.enum(['BOTTOM', 'CENTER', 'TOP']),
+    animationType: z.enum(['fade', 'pop', 'highlight', 'bounce']).optional(),
+    activeColor: z.string().optional(),
+  }).optional(),
+  subtitleSegments: z.array(z.object({
+    id: z.number(),
+    scriptText: z.string(),
+    startTime: z.number(),
+    endTime: z.number(),
+  })).optional(),
 });
 
 export type DarkVideoProps = z.infer<typeof darkVideoSchema>;
@@ -113,6 +131,8 @@ export const DarkVideo: React.FC<DarkVideoProps> = ({
   scenes,
   transitionDuration = 15,
   kenBurnsEnabled = true,
+  subtitleConfig,
+  subtitleSegments = [],
 }) => {
   const { fps } = useVideoConfig();
 
@@ -137,7 +157,8 @@ export const DarkVideo: React.FC<DarkVideoProps> = ({
                 durationInFrames={durationInFrames}
                 enabled={kenBurnsEnabled}
               />
-              <SceneCaption text={scene.text} />
+              {/* Desativando o caption antigo em favor do novo renderer global */}
+              {/* <SceneCaption text={scene.text} /> */}
               <Audio src={staticFile(scene.audioPath)} />
             </TransitionSeries.Sequence>
           );
@@ -156,6 +177,14 @@ export const DarkVideo: React.FC<DarkVideoProps> = ({
           return elements;
         })}
       </TransitionSeries>
+
+      {/* Renderizador de Legendas Profissional */}
+      {subtitleConfig && subtitleSegments.length > 0 && (
+        <CaptionsRenderer 
+          segments={subtitleSegments} 
+          config={subtitleConfig} 
+        />
+      )}
     </AbsoluteFill>
   );
 };

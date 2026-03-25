@@ -4,12 +4,15 @@ export enum VideoFormat {
 }
 
 export interface SubtitleConfig {
+  styleId?: string; // ID do preset (ex: 'neon', 'comic')
   fontName: string;
   fontSize: number;
   primaryColor: string; // Hex code
   outlineColor: string; // Hex code
-  backgroundColor: string; // Hex code (usually transparent/semi)
+  backgroundColor: string; // Hex code
   alignment: 'BOTTOM' | 'CENTER' | 'TOP';
+  animationType?: 'fade' | 'pop' | 'highlight' | 'bounce';
+  activeColor?: string; // Cor para a palavra em destaque (ASR)
 }
 
 export interface ChannelPrompt {
@@ -260,6 +263,10 @@ export interface SubtitlesStageData {
   segmentCount?: number;
   totalDuration?: number;
   wordCount?: number;
+  config?: {
+    style: any;
+    mode: 'ai' | 'manual';
+  };
   mode?: 'auto' | 'manual';
 }
 
@@ -342,9 +349,7 @@ export const PIPELINE_STAGES_ORDER: PipelineStage[] = [
   PipelineStage.SCRIPT,
   PipelineStage.SCENES,
   PipelineStage.AUDIO,
-  PipelineStage.AUDIO_COMPRESS,
   PipelineStage.SUBTITLES,
-  PipelineStage.IMAGES,
   PipelineStage.VIDEO,
   PipelineStage.PUBLISH_YT,
   PipelineStage.THUMBNAIL,
@@ -363,10 +368,10 @@ export const STAGE_META: Record<PipelineStage, StageMeta> = {
   [PipelineStage.REFERENCE]: { label: 'Referência', shortLabel: 'Ref', icon: 'Search', color: '#6366F1', bgColor: '#EEF2FF' },
   [PipelineStage.SCRIPT]: { label: 'Roteiro', shortLabel: 'Rot', icon: 'FileText', color: '#8B5CF6', bgColor: '#F5F3FF' },
   [PipelineStage.SCENES]: { label: 'Cenas', shortLabel: 'Cen', icon: 'Layout', color: '#14B8A6', bgColor: '#F0FDFA' },
-  [PipelineStage.AUDIO]: { label: 'Áudio', shortLabel: 'Áud', icon: 'Mic', color: '#EC4899', bgColor: '#FDF2F8' },
-  [PipelineStage.AUDIO_COMPRESS]: { label: 'Compressão', shortLabel: 'Cmp', icon: 'Volume2', color: '#EC4899', bgColor: '#FDF2F8' },
+  [PipelineStage.AUDIO]: { label: 'Audio e Imagem', shortLabel: 'A&I', icon: 'Mic', color: '#EC4899', bgColor: '#FDF2F8' },
+  [PipelineStage.AUDIO_COMPRESS]: { label: 'Etapa Obsoleta', shortLabel: 'Obs', icon: 'Volume2', color: '#94A3B8', bgColor: '#F1F5F9' },
   [PipelineStage.SUBTITLES]: { label: 'Legendas', shortLabel: 'Leg', icon: 'Subtitles', color: '#8B5CF6', bgColor: '#F5F3FF' },
-  [PipelineStage.IMAGES]: { label: 'Imagens', shortLabel: 'Img', icon: 'Image', color: '#F97316', bgColor: '#FFF7ED' },
+  [PipelineStage.IMAGES]: { label: 'Etapa Obsoleta', shortLabel: 'Obs', icon: 'Image', color: '#94A3B8', bgColor: '#F1F5F9' },
   [PipelineStage.VIDEO]: { label: 'Vídeo', shortLabel: 'Víd', icon: 'Film', color: '#EF4444', bgColor: '#FEF2F2' },
   [PipelineStage.PUBLISH_YT]: { label: 'Publicar YT', shortLabel: 'PubYT', icon: 'Youtube', color: '#DC2626', bgColor: '#FEF2F2' },
   [PipelineStage.THUMBNAIL]: { label: 'Thumbnail', shortLabel: 'Thumb', icon: 'ImagePlus', color: '#0EA5E9', bgColor: '#F0F9FF' },

@@ -120,6 +120,17 @@ export async function writeBinary(relativePath: string, data: Uint8Array): Promi
     await invoke('write_file', { path: fullPath, content: Array.from(data) });
 }
 
+/** Write base64 string to a file as binary. Creates parent dirs automatically. */
+export async function writeBase64(relativePath: string, base64: string): Promise<void> {
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return writeBinary(relativePath, bytes);
+}
+
 // ─── File/Directory Operations ───────────────────────────
 
 /** Check if a file or directory exists */

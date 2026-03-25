@@ -17,6 +17,8 @@ import {
   Sparkles
 } from 'lucide-react';
 import { VideoProject, SubtitleConfig, PipelineStage, StoryboardSegment } from '../../types';
+import { SubtitleStyleGallery } from './SubtitleStyleGallery';
+import { SubtitlePreset } from '../../lib/subtitlePresets';
 
 interface TextToolsPanelProps {
   project: VideoProject;
@@ -135,6 +137,20 @@ export const TextToolsPanel: React.FC<TextToolsPanelProps> = ({ project, config 
     </div>
   );
 
+  const handleSelectPreset = (preset: SubtitlePreset) => {
+    setSubtitleConfig({
+      ...subtitleConfig,
+      styleId: preset.id,
+      fontName: preset.fontName,
+      fontSize: preset.fontSize,
+      primaryColor: preset.primaryColor,
+      outlineColor: preset.outlineColor,
+      backgroundColor: preset.backgroundColor,
+      animationType: preset.animationType,
+      activeColor: preset.activeColor
+    });
+  };
+
   const renderStylesTab = () => (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="p-4 border-b border-white/5 flex items-center gap-2 bg-white/2">
@@ -145,6 +161,16 @@ export const TextToolsPanel: React.FC<TextToolsPanelProps> = ({ project, config 
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
+        {/* Galeria de Presets */}
+        <section>
+          <SubtitleStyleGallery 
+            selectedStyleId={subtitleConfig.styleId} 
+            onSelect={handleSelectPreset} 
+          />
+        </section>
+
+        <div className="h-px bg-white/5" />
+
         {/* Tipografia */}
         <section className="space-y-4">
           <label className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em] flex items-center gap-2">

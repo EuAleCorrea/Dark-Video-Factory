@@ -690,3 +690,77 @@ SAÍDA: Apenas a frase assertiva de diagnóstico.`;
     return "Ocorreu um problema técnico na comunicação com o provedor. Verifique sua conta e conexão.";
   }
 };
+
+/**
+ * 6. SPEECH-TO-TEXT (STT) - GEMINI 1.5 FLASH
+ * Transcreve áudio com timestamps precisos para legendas sincronizadas.
+ */
+export const transcribeAudio = async (
+  audioBase64: string,
+  mimeType: string,
+  config: EngineConfig
+): Promise<{ segments: { id: number; scriptText: string; startTime: number; endTime: number }[] }> => {
+  const geminiField = config?.apiKeys.gemini;
+  if (!geminiField) throw new Error("API Key do Gemini não configurada.");
+
+  const prompt = `
+    Analise este áudio e forneça uma transcrição dividida em segmentos curtos (máximo 10 palavras por segmento).
+    Para cada segmento, forneça o tempo de início e fim em segundos.
+    
+    SAÍDA (JSON STRICT - ARRAY):
+    [
+      { "id": 1, "scriptText": "Texto do segmento...", "startTime": 0.0, "endTime": 2.5 },
+      ...
+    ]
+  `;
+
+  return withGeminiKeyRotation(geminiField, async (apiKey) => {
+    const ai = getGeminiClient(apiKey);
+    console.log(`[STT] 📝 Transcrevendo áudio via Gemini 2.0 Flash...`);
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: audioBase64
+                }
+              }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.NUMBER },
+                scriptText: { type: Type.STRING },
+                startTime: { type: Type.NUMBER },
+                endTime: { type: Type.NUMBER }
+              },
+              required: ["id", "scriptText", "startTime", "endTime"]
+            }
+          }
+        }
+      });
+
+      const text = response.text;
+      if (!text) throw new Error("Resposta vazie do STT");
+      const segments = JSON.parse(text);
+      return { segments };
+
+    } catch (err) {
+      console.error("[STT] ❌ Erro na transcrição:", err);
+      throw err;
+    }
+  });
+};

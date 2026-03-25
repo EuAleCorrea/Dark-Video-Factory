@@ -1,18 +1,26 @@
 import React from 'react';
-import { VideoProject, PipelineStage, STAGE_META, ReferenceStageData, SubtitlesStageData, AudioStageData, AudioCompressStageData, VideoStageData, EngineConfig } from '../types';
-import { X, BookOpen, FileText, Calendar, Hash, Type, Info, ExternalLink, MessageSquare, Code, Play, Clock, AlignLeft, Captions, Mic, Volume2, HardDrive, Zap, Download, Image as ImageIcon, Loader2, Cpu, Film, FolderOpen, Copy } from 'lucide-react';
+import { VideoProject, PipelineStage, STAGE_META, ReferenceStageData, SubtitlesStageData, AudioStageData, AudioCompressStageData, VideoStageData, EngineConfig, ScenesStageData, SceneData, ChannelProfile } from '../types';
+import { X, BookOpen, FileText, Calendar, Hash, Type, Info, ExternalLink, MessageSquare, Code, Play, Clock, AlignLeft, Captions, Mic, Volume2, HardDrive, Zap, Download, Image as ImageIcon, Loader2, Cpu, Film, FolderOpen, Copy, Pause } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import VideoPlayerModal from './VideoPlayerModal';
-import { loadAudioBlobUrl, loadAudioRaw } from '../services/AudioStorageService';
+import { loadAudioBlobUrl, loadAudioRaw, resolveAudioPath, mergeProjectAudio } from '../services/AudioStorageService';
 import Storyboard from './Storyboard';
 import { ProjectService } from '../services/ProjectService';
 import { ImagePromptService } from '../services/ImagePromptService';
-import { getImageProvider, getImageModel } from '../services/imageProviders';
+import { getImageProvider, getImageModel, IMAGE_MODELS } from '../services/imageProviders';
 import { interpretErrorWithAI } from '../services/geminiService';
 import { useStatusModal } from '../contexts/StatusModalContext';
 import { saveImageToDisk } from '../services/ImageDiskService';
 import { converterParaSRT, getSrtStats } from '../services/SrtConverterService';
+import { PipelineExecutor } from '../services/PipelineExecutor';
+import { ElevenLabsService } from '../services/ElevenLabsService';
+import * as DiskStorage from '../services/DiskStorageService';
+import { SubtitleStyleGallery } from './editor/SubtitleStyleGallery';
+import { SubtitlePreset, SUBTITLE_PRESETS } from '../lib/subtitlePresets';
+import { transcribeAudio, generateVisualPromptsForSegments } from '../services/geminiService';
+import { generateSrtContent, generateAssContent } from '../lib/subtitleGenerator';
+import { Wand2 } from 'lucide-react';
 
 interface StageDetailsModalProps {
     isOpen: boolean;
@@ -20,10 +28,12 @@ interface StageDetailsModalProps {
     project: VideoProject | null;
     stage: PipelineStage | null;
     config: EngineConfig | null;
+    profile: ChannelProfile | null;
     onUpdate: (projectId: string, updatedProject: Partial<VideoProject>) => Promise<void>;
+    executor: PipelineExecutor | null;
 }
 
-export default function StageDetailsModal({ isOpen, onClose, project, stage, config, onUpdate }: StageDetailsModalProps) {
+export default function StageDetailsModal({ isOpen, onClose, project, stage, config, profile, onUpdate, executor }: StageDetailsModalProps) {
     const [isVideoPlayerOpen, setIsVideoPlayerOpen] = React.useState(false);
     const [showAss, setShowAss] = React.useState(false);
     const [audioBlobUrl, setAudioBlobUrl] = React.useState<string | null>(null);
@@ -31,15 +41,87 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
     const [isExporting, setIsExporting] = React.useState(false);
     const [stylePrompt, setStylePrompt] = React.useState("");
     const [generatingIds, setGeneratingIds] = React.useState<number[]>([]);
+    const [generatingAudioIds, setGeneratingAudioIds] = React.useState<number[]>([]);
+    const [generatingImageIds, setGeneratingImageIds] = React.useState<number[]>([]); // Novo
     const [imageViewerData, setImageViewerData] = React.useState<{ url: string, text: string } | null>(null);
+    const [sceneAudioConfigs, setSceneAudioConfigs] = React.useState<Record<number, { provider: string, voiceId: string }>>({});
+    const [sceneImageConfigs, setSceneImageConfigs] = React.useState<Record<number, { modelId: string }>>({}); // Novo
+    const [elevenLabsVoices, setElevenLabsVoices] = React.useState<any[]>([]);
+    const [elevenLabsLoading, setElevenLabsLoading] = React.useState(false);
+    const [isTranscribing, setIsTranscribing] = React.useState(false);
+    const [selectedSubtitleStyle, setSelectedSubtitleStyle] = React.useState<SubtitlePreset | null>(null);
     const isGeneratingRef = React.useRef(false);
     const status = useStatusModal();
 
-    // ═══════════════════════════════════════════════════
-    // 🔒 MODO TESTE — Trava temporária de segurança
-    //    Limita geração a N imagens por ação.
-    //    Remover quando a aplicação estiver estável.
-    // ═══════════════════════════════════════════════════
+    // Helper para casar a voz do perfil com as opções do modal
+    const getInitialVoice = (provider: string) => {
+        const pv = profile?.voiceProfile || '';
+        if (provider === 'google') {
+            const googleVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede'];
+            // Se o perfil contém o nome de uma voz Google (ex: "Charon (Masculino)")
+            const matched = googleVoices.find(v => pv.toLowerCase().includes(v.toLowerCase()));
+            return matched || 'Kore';
+        }
+        // Para ElevenLabs, assume que o perfil já guarda o ID ou nome exato
+        return pv || (elevenLabsVoices[0]?.voice_id || '');
+    };
+
+    const handleGenerateSceneAudio = async (sceneId: number) => {
+        if (!project || !executor) {
+            status.error("Executor não disponível ou projeto inválido.");
+            return;
+        }
+        
+        // Determinar configurações efetivas (local override ou global fallback)
+        const sceneConfig = sceneAudioConfigs[sceneId];
+        const effectiveProvider = (sceneConfig?.provider || config?.providers.tts || 'google') as 'google' | 'elevenlabs';
+        const effectiveVoiceId = sceneConfig?.voiceId || getInitialVoice(effectiveProvider);
+
+        setGeneratingAudioIds(prev => [...prev, sceneId]);
+        try {
+            const updatedProject = await executor.processSingleSceneAudio(
+                project,
+                sceneId,
+                profile!,
+                config!,
+                { provider: effectiveProvider, voiceId: effectiveVoiceId }
+            );
+            status.success(`Áudio da cena ${sceneId} gerado!`);
+            if (onUpdate) await onUpdate(project.id, updatedProject);
+        } catch (err: any) {
+            console.error('Error in processSingleSceneAudio:', err);
+            status.error(err.message || String(err), "Falha na Geração");
+        } finally {
+            setGeneratingAudioIds(prev => prev.filter(id => id !== sceneId));
+        }
+    };
+
+    const handleGenerateSceneImage = async (sceneId: number) => {
+        if (!project || !executor || generatingImageIds.includes(sceneId)) return;
+
+        setGeneratingImageIds(prev => [...prev, sceneId]);
+        const modelId = sceneImageConfigs[sceneId]?.modelId || config?.providers.image || 'FLUX';
+
+        try {
+            const updatedProject = await executor.processSingleSceneImage(
+                project,
+                sceneId,
+                profile!,
+                config!,
+                { modelId }
+            );
+
+            // O executor já atualiza o projeto no disco e via onProgress
+            await onUpdate(project.id, { stageData: updatedProject.stageData });
+        } catch (err: any) {
+            console.error(err);
+            status.error("Erro ao gerar imagem", err.message);
+        } finally {
+            setGeneratingImageIds(prev => prev.filter(id => id !== sceneId));
+        }
+    };
+
+    // 🔒 MODO TESTE
     const TEST_MODE_MAX_IMAGES = 2;
 
     React.useEffect(() => {
@@ -51,9 +133,25 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
     }, [project?.id]);
 
     React.useEffect(() => {
+        if (!isOpen || !config?.apiKeys?.elevenLabs) return;
+        const fetchVoices = async () => {
+            try {
+                setElevenLabsLoading(true);
+                const service = new ElevenLabsService(config.apiKeys.elevenLabs!);
+                const voices = await service.getVoices();
+                setElevenLabsVoices(voices);
+            } catch (err) {
+                console.error('Failed to load ElevenLabs voices:', err);
+            } finally {
+                setElevenLabsLoading(false);
+            }
+        };
+        fetchVoices();
+    }, [isOpen, config?.apiKeys?.elevenLabs]);
+
+    React.useEffect(() => {
         if (!isOpen || !project || !stage) return;
 
-        // Load audio for AUDIO or AUDIO_COMPRESS stages
         if (stage === PipelineStage.AUDIO || stage === PipelineStage.AUDIO_COMPRESS) {
             setAudioLoading(true);
             setAudioBlobUrl(null);
@@ -61,7 +159,6 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
             const loadAudio = async () => {
                 try {
                     if (stage === PipelineStage.AUDIO_COMPRESS) {
-                        // MP3 compressed — key is projectId_compressed
                         const compressedKey = `${project.id}_compressed`;
                         const rawData = await loadAudioRaw(compressedKey);
                         if (rawData) {
@@ -69,7 +166,6 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                             setAudioBlobUrl(URL.createObjectURL(blob));
                         }
                     } else {
-                        // WAV original
                         const blobUrl = await loadAudioBlobUrl(project.id);
                         setAudioBlobUrl(blobUrl);
                     }
@@ -79,11 +175,8 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
                     setAudioLoading(false);
                 }
             };
-
             loadAudio();
-
             return () => {
-                // Cleanup blob URL on unmount
                 setAudioBlobUrl(prev => {
                     if (prev) URL.revokeObjectURL(prev);
                     return null;
@@ -117,10 +210,7 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
         await onUpdate(project.id, {
             stageData: {
                 ...project.stageData,
-                subtitles: {
-                    ...subData,
-                    segments: updatedSegments
-                }
+                subtitles: { ...subData, segments: updatedSegments }
             }
         });
     };
@@ -137,69 +227,199 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
         await onUpdate(project.id, {
             stageData: {
                 ...project.stageData,
-                subtitles: {
-                    ...subData,
-                    segments: updatedSegments
-                }
+                subtitles: { ...subData, segments: updatedSegments }
             }
         });
     };
 
-    const handleGenerateImages = async (ids: number[]) => {
-        // ── REGRA 2: Prevenção de loop / double-click ──
-        if (isGeneratingRef.current) {
-            console.warn('[StageDetails] ⛔ Geração já em andamento — ignorando disparo duplicado.');
-            return;
-        }
+    const handleGenerateSubtitles = async () => {
+        if (!project || !config || isTranscribing) return;
+        
+        setIsTranscribing(true);
+        status.open('🎙️ Gerando Legendas via IA...');
 
-        if (!project || !config) {
-            status.open('❌ Erro de Configuração');
-            status.error('Projeto ou Configuração não encontrados.');
-            return;
+        try {
+            // ETAPA 1: Carregar áudio
+            status.log('📥 Carregando áudio do projeto...');
+            let rawAudio = await loadAudioRaw(project.id);
+            
+            if (!rawAudio) {
+                status.log('🔀 Áudio mestre não encontrado, consolidando cenas...');
+                try {
+                    const sceneIds = project.stageData.scenes?.scenes
+                        ?.filter((s: any) => s.audioUrl || s.status === 'done')
+                        .map((s: any) => s.id) || [];
+                    status.log(`📋 ${sceneIds.length} cenas com áudio encontradas`);
+                    await mergeProjectAudio(project.id, sceneIds.length > 0 ? sceneIds : undefined);
+                    status.log('✅ Consolidação concluída!');
+                    rawAudio = await loadAudioRaw(project.id);
+                } catch (mergeErr: any) {
+                    throw new Error(`Falha ao consolidar cenas: ${mergeErr.message}`);
+                }
+            }
+
+            if (!rawAudio) throw new Error("Áudio não encontrado. Gere os áudios das cenas primeiro.");
+
+            status.log(`📦 Áudio carregado: ${(rawAudio.byteLength / 1024 / 1024).toFixed(2)} MB`);
+
+            // ETAPA 2: Converter para base64
+            status.log('🔄 Preparando áudio para transcrição...');
+            let binary = '';
+            const len = rawAudio.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(rawAudio[i]);
+            }
+            const base64Audio = window.btoa(binary);
+            status.log(`📤 Base64 pronto (${(base64Audio.length / 1024 / 1024).toFixed(2)} MB)`);
+
+            // ETAPA 3: Transcrever via Gemini 2.0 Flash
+            status.log('🧠 Enviando para Gemini 2.0 Flash (STT)...');
+            status.log('⏳ Isso pode levar 30-60s dependendo do tamanho do áudio...');
+            const { segments: transcribedSegments } = await transcribeAudio(
+                base64Audio,
+                'audio/wav',
+                config
+            );
+            status.log(`✅ Transcrição concluída! ${transcribedSegments.length} segmentos`);
+
+            // ETAPA 4: Converter para StoryboardSegments
+            status.log('📝 Formatando segmentos de legenda...');
+            const sttSegments = transcribedSegments.map(s => {
+                const startMin = Math.floor(s.startTime / 60);
+                const startSec = Math.floor(s.startTime % 60);
+                const startMs = Math.floor((s.startTime % 1) * 100);
+                
+                const endMin = Math.floor(s.endTime / 60);
+                const endSec = Math.floor(s.endTime % 60);
+                const endMs = Math.floor((s.endTime % 1) * 100);
+
+                const timeRange = `${String(startMin).padStart(2, '0')}:${String(startSec).padStart(2, '0')}.${String(startMs).padStart(2, '0')} - ${String(endMin).padStart(2, '0')}:${String(endSec).padStart(2, '0')}.${String(endMs).padStart(2, '0')}`;
+
+                return {
+                    id: s.id,
+                    scriptText: s.scriptText,
+                    visualPrompt: '',
+                    duration: s.endTime - s.startTime,
+                    startTime: s.startTime,
+                    endTime: s.endTime,
+                    timeRange
+                };
+            });
+
+            // ETAPA 5: Gerar Prompts Visuais via IA
+            status.log('🎨 Gerando prompts visuais para imagens...');
+            const visualStyle = profile?.visualStyle || "cinematic, 8k, detailed";
+            const modelId = profile?.scriptingModel || config.scriptingModel || 'gemini-2.0-flash-exp';
+            const provider = (profile?.scriptingProvider || config.scriptingProvider || 'GEMINI') as any;
+
+            const visualPromptsRaw = await generateVisualPromptsForSegments(
+                sttSegments.map(s => ({ id: s.id, scriptText: s.scriptText })),
+                visualStyle,
+                modelId,
+                provider,
+                config
+            );
+            status.log(`✅ ${visualPromptsRaw.length} prompts visuais gerados`);
+
+            // ETAPA 6: Finalizar Segmentos
+            const finalSegments = sttSegments.map(seg => {
+                const promptObj = visualPromptsRaw.find(p => p.id === seg.id);
+                return {
+                    ...seg,
+                    visualPrompt: promptObj ? promptObj.visualPrompt : "Cinematic visualization"
+                };
+            });
+
+            // ETAPA 7: Gerar arquivos SRT/ASS
+            status.log('📄 Gerando legendas SRT/ASS...');
+            const srtContent = generateSrtContent(finalSegments);
+            const style = selectedSubtitleStyle || project.stageData.subtitles?.config?.style || SUBTITLE_PRESETS[0];
+            const profileWithStyle = { ...profile!, subtitleStyle: style };
+            const assContent = generateAssContent(finalSegments, profileWithStyle as any);
+
+            // ETAPA 8: Atualizar projeto
+            status.log('💾 Salvando dados do projeto...');
+            const subtitleData: SubtitlesStageData = {
+                srtContent,
+                assContent,
+                segments: finalSegments,
+                segmentCount: finalSegments.length,
+                totalDuration: finalSegments[finalSegments.length - 1]?.endTime || 0,
+                wordCount: finalSegments.reduce((acc, s) => acc + s.scriptText.split(/\s+/).length, 0),
+                config: {
+                    style: style,
+                    mode: 'ai' as const
+                }
+            };
+
+            await onUpdate(project.id, {
+                currentStage: PipelineStage.SUBTITLES,
+                stageData: {
+                    ...project.stageData,
+                    subtitles: subtitleData
+                }
+            });
+
+            status.success('Legendas e Storyboard gerados com sucesso!');
+        } catch (err: any) {
+            console.error(err);
+            // Formata mensagem de erro mais legível
+            let errorMsg = '';
+            if (typeof err === 'object' && err.message) {
+                errorMsg = err.message;
+            } else if (typeof err === 'string') {
+                errorMsg = err;
+            } else {
+                errorMsg = JSON.stringify(err);
+            }
+            // Extrai mensagem útil de erros JSON do Gemini
+            if (errorMsg.includes('"code":429') || errorMsg.includes('RESOURCE_EXHAUSTED')) {
+                errorMsg = '⚠️ Quota excedida em todas as chaves Gemini. Aguarde alguns minutos e tente novamente, ou adicione mais chaves em Configurações.';
+            }
+            status.error(errorMsg);
+        } finally {
+            setIsTranscribing(false);
         }
+    };
+
+    const handleStyleSelect = async (style: SubtitlePreset) => {
+        setSelectedSubtitleStyle(style);
+        if (!project || !project.stageData.subtitles) return;
+
+        const subData = project.stageData.subtitles as SubtitlesStageData;
+        const profileWithStyle = { ...profile!, subtitleStyle: style };
+        const assContent = generateAssContent(subData.segments, profileWithStyle as any);
+
+        await onUpdate(project.id, {
+            stageData: {
+                ...project.stageData,
+                subtitles: { 
+                    ...subData, 
+                    assContent,
+                    config: { 
+                        style, 
+                        mode: subData.config?.mode || 'ai' as const
+                    }
+                }
+            }
+        });
+        status.success(`Estilo "${style.name}" aplicado!`);
+    };
+
+    const handleGenerateImages = async (ids: number[]) => {
+        if (isGeneratingRef.current) return;
+        if (!project || !config) return;
 
         const subData = project.stageData.subtitles;
-        if (!subData) {
-            status.open('❌ Erro de Dados');
-            status.error('Dados de legenda não encontrados. Processe o estágio de Legendas primeiro.');
-            return;
-        }
+        if (!subData) return;
 
-        // ── REGRA 3: Verificar imagens pré-existentes ──
-        const existingImages = ids.filter(id => {
-            const seg = subData.segments.find(s => s.id === id);
-            return seg?.assets?.imageUrl;
-        });
-
-        if (existingImages.length > 0) {
-            const confirmed = window.confirm(
-                `⚠️ Já existem ${existingImages.length} imagem(ns) gerada(s) anteriormente.\n\nDeseja substituir todas?`
-            );
-            if (!confirmed) {
-                console.log('[StageDetails] 🚫 Usuário cancelou a substituição.');
-                return;
-            }
-        }
-
-        const safeIds = ids;
-
-        // ── Marcar como em execução (anti-loop) ──
         isGeneratingRef.current = true;
-
-        // ── Abrir StatusModal com logs em tempo real ──
         status.open('🎨 Gerando Imagens...');
-        status.log(`🎯 ${safeIds.length} segmentos selecionados`);
-        status.log(`🖌️ Estilo: ${stylePrompt.substring(0, 80)}...`);
-
-        // Marcar cenas selecionadas como "em processamento"
-        setGeneratingIds(prev => [...new Set([...prev, ...safeIds])]);
+        setGeneratingIds(prev => [...new Set([...prev, ...ids])]);
 
         try {
             const modelIdMap: Record<string, string> = {
-                'FLUX': 'FLUX.1',
-                'NANO_BANANA': 'Nano Banana',
-                'IDEOGRAM': 'Ideogram',
-                'TOGETHER': 'FLUX.1-Together'
+                'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together'
             };
 
             const imageModelId = modelIdMap[config.providers.image] || 'FLUX.1';
@@ -207,839 +427,310 @@ export default function StageDetailsModal({ isOpen, onClose, project, stage, con
             const provider = getImageProvider(imageModelId);
 
             if (!model) throw new Error(`Modelo ${imageModelId} não encontrado.`);
+            const apiKey = (config.apiKeys as any)[model.apiKeyField];
 
-            const apiKey = (config.apiKeys as any)[model.apiKeyField] as string;
-
-            if (!apiKey) {
-                status.error(`API Key (${model.apiKeyField}) para ${imageModelId} não está configurada.`, 'Chave de API ausente');
-                setGeneratingIds(prev => prev.filter(gid => !ids.includes(gid)));
-                isGeneratingRef.current = false;
-                return;
-            }
-
-            status.log(`🤖 Modelo: ${model.label} [${model.badge}]`);
-
-            let lastRawError = "";
-            let lastErrorMessage = "";
             const updatedSegments = [...subData.segments];
-            let successCount = 0;
-
-            const getFriendlyErrorMessage = (error: any): string => {
-                const msg = error?.message || String(error);
-                if (msg.includes("Insufficient funds") || msg.includes("insufficientCredits")) return "Seu saldo na RunWare acabou ou é insuficiente.";
-                if (msg.includes("Unauthorized") || msg.includes("Invalid API Key") || msg.includes("401")) return "Sua chave de API parece estar incorreta ou inválida.";
-                return msg.replace("Erro RunWare:", "").trim();
-            };
-
-            // ESTRATÉGIA DE CONSOLIDAÇÃO:
-            const sceneGroups: Record<string, number[]> = {};
-            for (const id of safeIds) {
-                const seg = subData.segments.find(s => s.id === id);
-                const sId = seg?.sceneId ? `scene_${seg.sceneId}` : `seg_${id}`;
-                if (!sceneGroups[sId]) sceneGroups[sId] = [];
-                sceneGroups[sId].push(id);
-            }
-
-            const totalScenes = Object.keys(sceneGroups).length;
-            status.log(`📦 Consolidação: ${safeIds.length} segmentos → ${totalScenes} cenas únicas`);
-            status.log('─────────────────────────────');
-
-            let sceneIndex = 0;
-            for (const [sKey, segmentIdsInScene] of Object.entries(sceneGroups)) {
-                sceneIndex++;
-                const firstId = segmentIdsInScene[0];
-                const segIdx = updatedSegments.findIndex(s => s.id === firstId);
-                if (segIdx === -1) {
-                    setGeneratingIds(prev => prev.filter(gid => !segmentIdsInScene.includes(gid)));
-                    continue;
-                }
-
+            for (const id of ids) {
+                const segIdx = updatedSegments.findIndex(s => s.id === id);
+                if (segIdx === -1) continue;
                 const seg = updatedSegments[segIdx];
 
                 try {
-                    status.log(`🔄 [${sceneIndex}/${totalScenes}] Cena ${sKey} (${segmentIdsInScene.length} seg.)...`);
-
-                    const expandedPrompt = await ImagePromptService.expandPrompt(
-                        seg.scriptText,
-                        stylePrompt,
-                        config
-                    );
-                    status.log(`   📝 Prompt expandido (${expandedPrompt.length} chars)`);
-
-                    const result = await provider.generate(
-                        expandedPrompt,
-                        project.stageData.reference?.videoUrl ? 768 : 1024,
-                        project.stageData.reference?.videoUrl ? 1376 : 1024,
-                        1,
-                        apiKey
-                    );
-
-                    if (result.urls && result.urls.length > 0) {
+                    const expandedPrompt = await ImagePromptService.expandPrompt(seg.scriptText, stylePrompt, config);
+                    const result = await provider.generate(expandedPrompt, 1024, 1024, 1, apiKey);
+                    
+                    if (result.urls?.[0]) {
                         let imageUrl = result.urls[0];
+                        const localPath = await saveImageToDisk(imageUrl, project.id, id);
+                        imageUrl = localPath;
 
-                        // Salvar imagem em disco para persistência segura
-                        try {
-                            const firstSegId = segmentIdsInScene[0];
-                            const localPath = await saveImageToDisk(imageUrl, project.id, firstSegId);
-                            imageUrl = localPath;
-                            status.log(`   💾 Imagem salva em disco`);
-                        } catch (diskErr) {
-                            console.warn('[StageDetails] Falha ao salvar em disco, usando URL direta:', diskErr);
-                            // Continua com a URL original se falhar
-                        }
-                        for (const id of segmentIdsInScene) {
-                            const idx = updatedSegments.findIndex(s => s.id === id);
-                            if (idx !== -1) {
-                                updatedSegments[idx] = {
-                                    ...updatedSegments[idx],
-                                    assets: {
-                                        ...updatedSegments[idx].assets,
-                                        imageUrl
-                                    }
-                                };
-                            }
-                        }
-                        successCount += segmentIdsInScene.length;
-                        status.log(`   ✅ Imagem gerada e replicada para ${segmentIdsInScene.length} segmentos`);
-
-                        // ── SALVAMENTO INCREMENTAL: atualizar o projeto a cada cena ──
-                        // Isso garante que o Storyboard re-renderize com as novas imagens
-                        const partialSubData = { ...subData, segments: [...updatedSegments] };
+                        updatedSegments[segIdx] = { ...updatedSegments[segIdx], assets: { ...updatedSegments[segIdx].assets, imageUrl } };
                         await onUpdate(project.id, {
                             stageData: {
                                 ...project.stageData,
-                                subtitles: partialSubData,
-                                reference: {
-                                    ...project.stageData.reference!,
-                                    stylePrompt: stylePrompt
-                                }
+                                subtitles: { ...subData, segments: [...updatedSegments] },
+                                reference: { ...project.stageData.reference!, stylePrompt }
                             }
                         });
-                    } else {
-                        throw new Error("API retornou sucesso mas sem URLs de imagem.");
                     }
-                } catch (err: any) {
-                    console.error(`[StageDetails] ❌ Falha na cena ${sKey}:`, err);
-                    lastErrorMessage = getFriendlyErrorMessage(err);
-                    lastRawError = err.message || String(err);
-                    status.log(`   ❌ Erro: ${lastErrorMessage}`);
+                } catch (err) {
+                    console.error(`Error generating image for segment ${id}:`, err);
                 } finally {
-                    setGeneratingIds(prev => prev.filter(gid => !segmentIdsInScene.includes(gid)));
+                    setGeneratingIds(prev => prev.filter(gid => gid !== id));
                 }
             }
-
-            status.log('─────────────────────────────');
-
-            if (successCount === safeIds.length) {
-                status.log(`🎉 Todas as ${safeIds.length} imagens foram geradas com sucesso!`);
-                status.success('Geração Concluída!');
-            } else if (successCount > 0) {
-                const aiFriendlyMessage = lastRawError
-                    ? await interpretErrorWithAI(lastRawError, config)
-                    : lastErrorMessage;
-                status.log(`⚠️ Geração parcial: ${successCount}/${safeIds.length} imagens`);
-                status.log(`💡 ${aiFriendlyMessage}`);
-                status.error(`${successCount} de ${safeIds.length} imagens geradas`, 'Geração Parcial');
-            } else {
-                const aiFriendlyMessage = lastRawError
-                    ? await interpretErrorWithAI(lastRawError, config)
-                    : lastErrorMessage;
-                status.log(`💡 ${aiFriendlyMessage}`);
-                status.error(aiFriendlyMessage, 'Falha na Geração');
-            }
+            status.success('Geração Concluída!');
         } catch (error: any) {
-            console.error("[StageDetails] Erro crítico na orquestração:", error);
-            status.error(error.message || 'Falha na comunicação com o serviço', 'Erro Inesperado');
+            status.error(error.message);
         } finally {
             isGeneratingRef.current = false;
         }
     };
 
-    const renderReferenceDetails = (refData: ReferenceStageData) => {
-        if (!refData) return null;
-
-        return (
-            <div className="p-6 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="space-y-6">
-                        <section>
-                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                <Info size={14} /> Metadados da Origem
-                            </h4>
-                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
-                                <DetailRow label="Título Original" value={refData.videoTitle} />
-                                <DetailRow label="Canal" value={refData.channelName} />
-                                <DetailRow label="Vídeo ID" value={refData.videoId} />
-                                <div className="pt-2">
-                                    <button
-                                        onClick={(e) => handleExternalLink(e, refData.videoUrl || `https://youtube.com/watch?v=${refData.videoId}`)}
-                                        className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-600 hover:text-emerald-700 transition-colors bg-transparent border-none p-0 cursor-pointer"
-                                    >
-                                        Ver no YouTube <ExternalLink size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                        </section>
-
-                        {refData.apifyRawData && (
-                            <section>
-                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                    <Code size={14} /> Dados Extras (APIFY)
-                                </h4>
-                                <div className="bg-slate-900 rounded-2xl p-4 overflow-hidden shadow-inner">
-                                    <pre className="text-[11px] text-emerald-400/90 font-mono overflow-auto max-h-[200px] custom-scrollbar">
-                                        {JSON.stringify(refData.apifyRawData, null, 2)}
-                                    </pre>
-                                </div>
-                            </section>
-                        )}
-                    </div>
-
-                    <div>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">YouTube Player</h4>
-                        <div
-                            className="relative group rounded-2xl overflow-hidden border border-slate-200 shadow-sm cursor-pointer"
-                            onClick={() => setIsVideoPlayerOpen(true)}
-                        >
-                            <img
-                                src={refData.thumbnailUrl}
-                                alt="Reference"
-                                className="w-full aspect-video object-cover transition-transform duration-500 group-hover:scale-105"
-                            />
-                            <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                                <div className="w-16 h-16 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white scale-90 group-hover:scale-100 transition-transform shadow-xl border border-white/30">
-                                    <Play size={32} fill="currentColor" className="ml-1" />
-                                </div>
-                            </div>
-                            <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/70 text-white text-[10px] font-bold rounded backdrop-blur-sm">
-                                ASSISTIR PREVIEW
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
+    const renderReferenceDetails = (refData: ReferenceStageData) => (
+        <div className="p-6 space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <section>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <MessageSquare size={14} /> Transcrição Obtida
-                    </h4>
-                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-                        <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed font-serif text-lg whitespace-pre-wrap max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
-                            {refData.transcript || 'Nenhuma transcrição disponível.'}
-                        </div>
-                    </div>
-                </section>
-
-                <VideoPlayerModal
-                    isOpen={isVideoPlayerOpen}
-                    onClose={() => setIsVideoPlayerOpen(false)}
-                    videoId={refData.videoId}
-                    videoTitle={refData.videoTitle}
-                />
-            </div>
-        );
-    };
-
-    const renderScriptDetails = (scriptData: any) => {
-        if (!scriptData) return null;
-
-        return (
-            <div className="p-6 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <StatCard icon={Type} label="Contagem" value={`${scriptData.wordCount} palavras`} color="blue" />
-                    <StatCard icon={Calendar} label="Gerado em" value={scriptData.generationSnapshot?.generatedAt ? new Date(scriptData.generationSnapshot.generatedAt).toLocaleDateString() : '—'} color="purple" />
-                    <StatCard icon={Hash} label="Tags" value={`${scriptData.tags?.length || 0} etiquetas`} color="emerald" />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <section>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Título Otimizado</h4>
-                        <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 text-emerald-900 font-bold text-lg">
-                            {scriptData.title || 'Sem título gerado'}
-                        </div>
-                    </section>
-                    <section>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Sugestão de Thumbnail (Texto)</h4>
-                        <div className="bg-orange-50 rounded-2xl p-4 border border-orange-100 text-orange-900 font-bold italic">
-                            "{scriptData.thumbText || '—'}"
-                        </div>
-                    </section>
-                </div>
-
-                <section>
-                    <div className="flex items-center justify-between mb-3">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Roteiro Final (Magnético)</h4>
-                        <button
-                            onClick={() => {
-                                if (scriptData.text) {
-                                    navigator.clipboard.writeText(scriptData.text);
-                                    status.open('📋 Roteiro copiado!');
-                                    status.success('Texto copiado para a área de transferência.');
-                                }
-                            }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition border border-slate-200 hover:border-emerald-200"
-                            title="Copiar roteiro"
-                        >
-                            <Copy size={12} />
-                            Copiar
-                        </button>
-                    </div>
-                    <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 shadow-inner">
-                        <div className="text-slate-800 leading-relaxed text-lg whitespace-pre-wrap max-h-[600px] overflow-y-auto pr-4 custom-scrollbar font-serif">
-                            {scriptData.text || 'Nenhum roteiro gerado.'}
-                        </div>
-                    </div>
-                </section>
-
-                {/* Botão Exportar SRT para CapCut */}
-                {scriptData.text && (
-                    <section className="bg-gradient-to-r from-violet-50 to-purple-50 rounded-2xl p-5 border border-violet-200">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h4 className="font-bold text-violet-800 flex items-center gap-2">
-                                    <Captions size={16} /> Exportar SRT (CapCut)
-                                </h4>
-                                <p className="text-xs text-violet-500 mt-1">
-                                    Gera arquivo .srt para importar no CapCut e usar vozes TTS
-                                </p>
-                            </div>
-                            <button
-                                onClick={async () => {
-                                    try {
-                                        const srtContent = converterParaSRT(scriptData.text);
-                                        const stats = getSrtStats(srtContent);
-                                        const { invoke } = await import('@tauri-apps/api/core');
-                                        const tempDir = await invoke<string>('get_downloads_dir');
-                                        const sep = tempDir.includes('\\') ? '\\' : '/';
-                                        const safeTitle = (project?.title || 'roteiro').replace(/[^a-zA-Z0-9\s-]/g, '').substring(0, 40).trim().replace(/\s+/g, '_');
-                                        const filePath = `${tempDir}${sep}${safeTitle}.srt`;
-                                        const encoder = new TextEncoder();
-                                        const bytes = encoder.encode(srtContent);
-                                        await invoke('write_file', { path: filePath, content: Array.from(bytes) });
-                                        status.open('\u2705 SRT Exportado!');
-                                        status.log(`\ud83d\udcc4 Arquivo: ${filePath}`);
-                                        status.log(`\ud83d\udce6 ${stats.blocos} blocos | Duração estimada: ${stats.duracaoTotal}`);
-                                        status.success('SRT salvo com sucesso!', {
-                                            label: "Abrir na Pasta",
-                                            icon: <FolderOpen size={16} />,
-                                            onClick: async () => {
-                                                try {
-                                                    console.log('[SRT Export] Tentando revelar o arquivo:', filePath);
-                                                    const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
-                                                    await revealItemInDir(filePath);
-                                                } catch (err: any) {
-                                                    console.error('[SRT Export] Erro ao abrir pasta:', err);
-                                                    alert('Falha ao abrir a pasta: ' + (err?.message || String(err)));
-                                                }
-                                            }
-                                        });
-                                    } catch (err: any) {
-                                        console.error('[SRT Export]', err);
-                                        status.open('\u274c Erro ao Exportar SRT');
-                                        status.error(err.message || 'Falha ao salvar arquivo');
-                                    }
-                                }}
-                                className="px-5 py-2.5 bg-violet-600 hover:bg-violet-500 text-white rounded-full font-bold text-sm transition flex items-center gap-2 shadow-lg shadow-violet-200"
-                            >
-                                <Download size={14} />
-                                Exportar .srt
-                            </button>
-                        </div>
-                    </section>
-                )}
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <section>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Descrição SEO</h4>
-                        <div className="bg-slate-50 rounded-2xl p-4 text-sm text-slate-600 max-h-[150px] overflow-y-auto custom-scrollbar">
-                            {scriptData.description || '—'}
-                        </div>
-                    </section>
-                    <section>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Tags Selecionadas</h4>
-                        <div className="flex flex-wrap gap-2">
-                            {scriptData.tags?.map((t: string, i: number) => (
-                                <span key={i} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-medium border border-slate-200">
-                                    #{t}
-                                </span>
-                            )) || '—'}
-                        </div>
-                    </section>
-                </div>
-
-                <section className="pt-4 border-t border-slate-100">
-                    <h4 className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-4">Metadados de Geração (IA)</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <DetailRow label="Modelo" value={scriptData.generationSnapshot?.modelId} compact />
-                        <DetailRow label="Provider" value={scriptData.generationSnapshot?.modelProvider} compact />
-                        <DetailRow label="Prompt ID" value={scriptData.generationSnapshot?.promptVersionId || 'Padrão'} compact />
-                        <DetailRow label="Modo" value={scriptData.mode === 'auto' ? 'Automático' : 'Manual'} compact />
-                    </div>
-                </section>
-            </div>
-        );
-    };
-
-    const renderAudioDetails = (audioData: AudioStageData) => {
-        if (!audioData) return null;
-
-        return (
-            <div className="p-6 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <StatCard icon={Mic} label="Provider" value={audioData.provider || 'N/A'} color="emerald" />
-                    <StatCard icon={Clock} label="Duração" value={audioData.duration ? `${audioData.duration.toFixed(1)}s` : 'N/A'} color="blue" />
-                    <StatCard icon={HardDrive} label="Formato" value="WAV" color="purple" />
-                </div>
-                <AudioPlayer label="Reprodução do Áudio (WAV)" />
-            </div>
-        );
-    };
-
-    const renderAudioCompressDetails = (compressData: AudioCompressStageData) => {
-        if (!compressData) return null;
-
-        return (
-            <div className="p-6 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <StatCard icon={Zap} label="Compressão" value={compressData.compressionRatio ? `${compressData.compressionRatio.toFixed(1)}x` : 'N/A'} color="emerald" />
-                    <StatCard icon={Clock} label="Duração" value={(compressData.duration || project.stageData.audio?.duration) ? `${(compressData.duration || project.stageData.audio?.duration)?.toFixed(1)}s` : 'N/A'} color="blue" />
-                    <StatCard icon={HardDrive} label="Formato" value={compressData.format?.toUpperCase() || 'MP3'} color="purple" />
-                </div>
-
-                <section>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <Download size={14} /> Detalhes da Compressão
-                    </h4>
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><Info size={14} /> Metadados</h4>
                     <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
-                        <DetailRow label="Tamanho Original" value={compressData.originalSize ? formatBytes(compressData.originalSize) : 'N/A'} />
-                        <DetailRow label="Tamanho Comprimido" value={compressData.compressedSize ? formatBytes(compressData.compressedSize) : 'N/A'} />
-                        <DetailRow label="Bitrate" value={compressData.bitrate ? `${compressData.bitrate} kbps` : 'N/A'} />
+                        <DetailRow label="Título" value={refData.videoTitle} />
+                        <DetailRow label="Canal" value={refData.channelName} />
+                        <button onClick={(e) => handleExternalLink(e, refData.videoUrl || "")} className="text-emerald-600 text-sm font-bold flex items-center gap-1 mt-2">Ver no YouTube <ExternalLink size={12}/></button>
                     </div>
                 </section>
-                <AudioPlayer label="Reprodução do Áudio (MP3)" />
+                <div className="relative group rounded-2xl overflow-hidden border cursor-pointer shadow-sm" onClick={() => setIsVideoPlayerOpen(true)}>
+                    <img src={refData.thumbnailUrl} alt="Thumbnail" className="w-full aspect-video object-cover" />
+                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Play size={40} className="text-white fill-white" /></div>
+                </div>
             </div>
-        );
-    };
+            <section>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Transcrição</h4>
+                <div className="bg-white border rounded-3xl p-6 text-slate-700 font-serif leading-relaxed h-[400px] overflow-y-auto custom-scrollbar whitespace-pre-wrap">
+                    {refData.transcript}
+                </div>
+            </section>
+            <VideoPlayerModal isOpen={isVideoPlayerOpen} onClose={() => setIsVideoPlayerOpen(false)} videoId={refData.videoId} videoTitle={refData.videoTitle} />
+        </div>
+    );
 
-    const AudioPlayer = ({ label }: { label: string }) => (
+    const renderScriptDetails = (scriptData: any) => (
+        <div className="p-6 space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <StatCard icon={Type} label="Palavras" value={`${scriptData.wordCount}`} color="blue" />
+                <StatCard icon={Calendar} label="Data" value={new Date(scriptData.generationSnapshot?.generatedAt || Date.now()).toLocaleDateString()} color="purple" />
+                <StatCard icon={Hash} label="Tags" value={`${scriptData.tags?.length || 0}`} color="emerald" />
+            </div>
+            <section>
+                <div className="flex justify-between items-center mb-3">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Roteiro Gerado</h4>
+                    <button onClick={() => { navigator.clipboard.writeText(scriptData.text); status.success("Texto copiado!"); }} className="text-xs flex items-center gap-1 text-slate-400 hover:text-emerald-600 transition-colors"><Copy size={12}/> Copiar</button>
+                </div>
+                <div className="bg-slate-50 border rounded-3xl p-6 text-slate-800 font-serif text-lg leading-relaxed h-[500px] overflow-y-auto custom-scrollbar whitespace-pre-wrap">
+                    {scriptData.text}
+                </div>
+            </section>
+        </div>
+    );
+
+    const renderAudioDetails = (audioData: AudioStageData) => (
+        <div className="p-6 space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <StatCard icon={Mic} label="Motor" value={audioData.provider || "Desconhecido"} color="emerald" />
+                <StatCard icon={Clock} label="Duração" value={`${audioData.duration?.toFixed(1)}s`} color="blue" />
+                <StatCard icon={HardDrive} label="Formato" value="WAV" color="purple" />
+            </div>
+            <AudioPlayerComponent label="Áudio Principal (WAV)" />
+        </div>
+    );
+
+    const renderAudioCompressDetails = (compressData: AudioCompressStageData) => (
+        <div className="p-6 space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <StatCard icon={Zap} label="Compressão" value={`${compressData.compressionRatio?.toFixed(1)}x`} color="emerald" />
+                <StatCard icon={Clock} label="Duração" value={`${compressData.duration?.toFixed(1)}s`} color="blue" />
+                <StatCard icon={HardDrive} label="Formato" value="MP3" color="purple" />
+            </div>
+            <AudioPlayerComponent label="Áudio Final (MP3)" />
+        </div>
+    );
+
+    const AudioPlayerComponent = ({ label }: { label: string }) => (
         <section>
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                <Volume2 size={14} /> {label}
-            </h4>
-            {audioLoading ? (
-                <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 flex items-center justify-center gap-3">
-                    <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-sm text-slate-500">Carregando áudio...</span>
-                </div>
-            ) : audioBlobUrl ? (
-                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
-                    <audio controls className="w-full" src={audioBlobUrl} preload="metadata">
-                        Seu navegador não suporta o elemento de áudio.
-                    </audio>
-                </div>
-            ) : (
-                <div className="bg-amber-50 rounded-2xl p-4 border border-amber-200 text-center">
-                    <p className="text-sm text-amber-700">Áudio não encontrado no armazenamento local.</p>
-                </div>
-            )}
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><Volume2 size={14} /> {label}</h4>
+            {audioLoading ? <div className="p-8 text-center text-slate-400 animate-pulse">Carregando...</div> :
+             audioBlobUrl ? <div className="bg-slate-50 p-4 rounded-2xl border"><audio controls src={audioBlobUrl} className="w-full" /></div> :
+             <div className="p-4 bg-amber-50 text-amber-700 rounded-xl border border-amber-100 italic text-sm text-center">Arquivo não disponível localmente.</div>}
         </section>
     );
 
-    const renderSubtitlesDetails = (subData: SubtitlesStageData) => {
-        if (!subData) return null;
-
-        return (
-            <div className="p-6 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <StatCard icon={Captions} label="Segmentos" value={`${subData.segmentCount}`} color="emerald" />
-                    <StatCard icon={Clock} label="Duração Total" value={`${(subData.totalDuration || 0).toFixed(1)}s`} color="blue" />
-                    <StatCard icon={Type} label="Palavras" value={`${subData.wordCount || 0}`} color="purple" />
-                </div>
-
-                <section>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                        <AlignLeft size={14} /> Storyboard do Vídeo
-                    </h4>
-                    <div className="bg-slate-50 border border-slate-200 rounded-3xl p-4 shadow-inner">
-                        <Storyboard
-                            segments={subData.segments}
-                            isEditable={true}
-                            onUpdate={handleUpdateSegment}
-                            onUpdateImage={handleUpdateSegmentImage}
-                            onGenerate={handleGenerateImages}
-                            generatingIds={generatingIds}
-                            onImageClick={(url: string, text: string) => setImageViewerData({ url, text })}
-                            config={config!}
-                        />
-                    </div>
-                </section>
-
-                <section>
-                    <button
-                        onClick={() => setShowAss(!showAss)}
-                        className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2 hover:text-slate-600 transition-colors cursor-pointer bg-transparent border-none p-0"
-                    >
-                        <Code size={14} /> Conteúdo ASS {showAss ? '▼' : '▶'}
-                    </button>
-                    {showAss && (
-                        <div className="bg-slate-900 rounded-2xl p-4 overflow-hidden shadow-inner">
-                            <pre className="text-[11px] text-emerald-400/90 font-mono overflow-auto max-h-[300px] custom-scrollbar whitespace-pre-wrap">
-                                {subData.assContent}
-                            </pre>
-                        </div>
-                    )}
-                </section>
-            </div>
-        );
-    };
-
-    const renderImagesDetails = (subData: SubtitlesStageData) => {
-        if (!subData) return null;
-
-        const sceneCount = subData.segments.length;
-
-        return (
-            <div className="p-6 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <StatCard icon={ImageIcon} label="Cenas Planejadas" value={`${sceneCount}`} color="emerald" />
-                    <StatCard icon={Clock} label="Duração" value={`${(subData.totalDuration || 0).toFixed(1)}s`} color="blue" />
-                    <StatCard icon={Cpu} label="Modelo IA" value={(() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} [${m.badge}]` : config?.providers.image || 'N/A'; })()} color="purple" />
-                    <StatCard icon={Zap} label="Otimização" value="Ativa" color="orange" />
-                </div>
-
-                <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex items-start gap-3">
-                    <div className="p-2 bg-white rounded-lg text-blue-600 shadow-sm shrink-0">
-                        <Info size={16} />
+    const renderSubtitlesDetails = (subData: SubtitlesStageData) => (
+        <div className="p-6 space-y-8">
+            <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
+                        <Captions size={20} />
                     </div>
                     <div>
-                        <p className="text-sm font-bold text-blue-900">Configuração de Geração Global</p>
-                        <p className="text-xs text-blue-700 leading-relaxed mt-0.5">
-                            O modelo <span className="font-bold underline">{(() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} (${m.badge})` : config?.providers.image; })()}</span> será utilizado para <b>todas as imagens</b> deste projeto.
-                            Essa configuração é definida globalmente e não pode ser alterada individualmente por cena para manter a consistência visual.
-                        </p>
+                        <h5 className="text-sm font-bold text-slate-800 uppercase tracking-tight">Sincronização de Legendas</h5>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wider">Gemini 1.5 Flash STT Engine</p>
                     </div>
                 </div>
-
-                <section>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <Zap size={14} className="text-purple-500" /> Direção de Arte (Estilo Visual Global)
-                    </h4>
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-6">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase mb-2 block">Prompt de Estilo / Look & Feel</label>
-                        <textarea
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-slate-700 font-mono focus:border-purple-400 outline-none resize-none"
-                            rows={3}
-                            placeholder="Descreva o estilo visual (ex: dark cinematic, hyper-realistic, 8k...)"
-                            value={stylePrompt}
-                            onChange={(e) => setStylePrompt(e.target.value)}
-                        />
-                        <p className="text-[10px] text-slate-400 mt-2 italic">
-                            * Este estilo será combinado com a descrição de cada cena para gerar as imagens.
-                        </p>
-                    </div>
-
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <ImageIcon size={14} /> Revisão de Roteiro & Descrições de Cena
-                    </h4>
-                    <div className="bg-slate-50 border border-slate-200 rounded-3xl p-4 shadow-inner">
-                        <Storyboard
-                            segments={subData.segments}
-                            isEditable={true}
-                            onUpdate={handleUpdateSegment}
-                            onUpdateImage={handleUpdateSegmentImage}
-                            onGenerate={handleGenerateImages}
-                            generatingIds={generatingIds}
-                            onImageClick={(url: string, text: string) => setImageViewerData({ url, text })}
-                            config={config!}
-                        />
-                    </div>
-                </section>
-            </div>
-        );
-    };
-
-    const renderImageViewer = () => {
-        if (!imageViewerData) return null;
-
-        return (
-            <div
-                className="fixed inset-0 z-[20000] bg-slate-950/98 backdrop-blur-xl flex flex-col items-center justify-center p-4 md:p-12 animate-in fade-in duration-500"
-                onClick={() => setImageViewerData(null)}
-            >
-                <div
-                    className="relative max-w-6xl w-full h-full flex flex-col items-center justify-center gap-6"
-                    onClick={e => e.stopPropagation()}
+                <button
+                    onClick={handleGenerateSubtitles}
+                    disabled={isTranscribing}
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all disabled:opacity-50 shadow-md active:scale-95"
                 >
-                    {/* Botão Fechar Flutuante */}
-                    <button
-                        onClick={() => setImageViewerData(null)}
-                        className="absolute top-0 -right-4 md:-right-12 text-white/40 hover:text-white transition-all p-3 hover:scale-110 active:scale-95"
-                    >
-                        <X size={40} strokeWidth={1.5} />
-                    </button>
-
-                    {/* Container Principal */}
-                    <div className="w-full flex-1 flex flex-col md:flex-row gap-8 items-stretch overflow-hidden">
-                        {/* Area da Imagem */}
-                        <div className="flex-1 flex items-center justify-center bg-black/40 rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl relative group">
-                            <img
-                                src={imageViewerData.url}
-                                alt="Preview Ampliado"
-                                className="w-full h-full object-contain p-2"
-                            />
-                            {/* Overlay de Brilho Sutil */}
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
-                        </div>
-
-                        {/* Painel Lateral de Informações */}
-                        <div className="w-full md:w-96 flex flex-col gap-6 animate-in slide-in-from-right-8 duration-700">
-                            {/* Card do Texto */}
-                            <div className="bg-white/5 border border-white/10 rounded-[2rem] p-8 backdrop-blur-md shadow-xl flex-1 flex flex-col">
-                                <h4 className="text-primary text-[11px] font-black uppercase tracking-[0.2em] mb-6 flex items-center gap-3">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(20,184,166,0.8)]" />
-                                    Narrativa da Cena
-                                </h4>
-                                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                                    <p className="text-white text-xl md:text-2xl font-light leading-relaxed tracking-wide italic opacity-90 first-letter:text-4xl first-letter:font-bold first-letter:text-primary">
-                                        {imageViewerData.text}
-                                    </p>
-                                </div>
-                            </div>
-
-                            {/* Detalhes Técnicos Estilizados */}
-                            <div className="bg-slate-900/50 border border-white/5 rounded-[2rem] p-8 backdrop-blur-sm">
-                                <div className="flex items-center gap-3 mb-6 text-white/30">
-                                    <Cpu size={16} />
-                                    <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                                        {imageViewerData.url.includes('pexels.com') ? 'Fonte da Imagem' : 'Motor de Geração'}
-                                    </span>
-                                </div>
-
-                                <div className="space-y-4">
-                                    <div className="flex flex-col gap-1">
-                                        <span className="text-[10px] text-white/20 uppercase font-black">
-                                            {imageViewerData.url.includes('pexels.com') ? 'Banco de Imagens' : 'Modelo Ativo'}
-                                        </span>
-                                        <span className="text-white font-medium text-lg tracking-tight">
-                                            {imageViewerData.url.includes('pexels.com')
-                                                ? 'Pexels Stock'
-                                                : (() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} [${m.badge}]` : 'N/A'; })()}
-                                        </span>
-                                    </div>
-                                    <div className="w-full h-px bg-white/5" />
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-xs text-white/30">Engine</span>
-                                        <span className="text-[10px] px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-full font-bold">
-                                            {imageViewerData.url.includes('pexels.com') ? 'Pexels API' : (() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m?.providerGroup || 'RunWare AI'; })()}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Hint de Teclado/Interação */}
-                    <p className="text-white/20 text-[10px] font-medium tracking-widest uppercase">
-                        Clique fora para fechar ou pressione Esc
-                    </p>
-                </div>
+                    {isTranscribing ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+                    <span className="text-xs font-bold uppercase">{subData ? 'Regerar com IA' : 'Gerar Legendas (IA)'}</span>
+                </button>
             </div>
-        );
-    };
+
+            <div className="bg-white border rounded-2xl p-4 shadow-sm">
+                <SubtitleStyleGallery 
+                    selectedStyleId={selectedSubtitleStyle?.id || subData?.config?.style?.id || profile?.subtitleStyle?.styleId}
+                    onSelect={handleStyleSelect}
+                />
+            </div>
+
+            {subData && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <StatCard icon={Captions} label="Segmentos" value={`${subData.segmentCount || 0}`} color="emerald" />
+                    <StatCard icon={Clock} label="Duração" value={`${subData.totalDuration?.toFixed(1) || 0}s`} color="blue" />
+                    <StatCard icon={Type} label="Palavras" value={`${subData.wordCount || 0}`} color="purple" />
+                </div>
+            )}
+
+            <section>
+                <div className="flex justify-between items-center mb-3"><h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Storyboard</h4></div>
+                <Storyboard
+                    segments={subData?.segments || []}
+                    isEditable={true}
+                    onUpdate={handleUpdateSegment}
+                    onUpdateImage={handleUpdateSegmentImage}
+                    onGenerate={handleGenerateImages}
+                    generatingIds={generatingIds}
+                    onImageClick={(url, text) => setImageViewerData({ url, text })}
+                    config={config!}
+                />
+            </section>
+        </div>
+    );
+
+    const renderImagesDetails = (subData: SubtitlesStageData) => (
+        <div className="p-6 space-y-8">
+            <div className="bg-white border rounded-2xl p-4 shadow-sm mb-6">
+                <label className="text-[10px] text-slate-400 font-bold uppercase mb-2 block">Estilo Visual Global</label>
+                <textarea
+                    className="w-full bg-slate-50 border rounded-xl p-3 text-sm text-slate-700 font-mono outline-none resize-none"
+                    rows={3}
+                    value={stylePrompt}
+                    onChange={(e) => setStylePrompt(e.target.value)}
+                />
+            </div>
+            <Storyboard
+                segments={subData.segments}
+                isEditable={true}
+                onUpdate={handleUpdateSegment}
+                onUpdateImage={handleUpdateSegmentImage}
+                onGenerate={handleGenerateImages}
+                generatingIds={generatingIds}
+                onImageClick={(url, text) => setImageViewerData({ url, text })}
+                config={config!}
+            />
+        </div>
+    );
 
     const renderVideoDetails = (videoData: VideoStageData) => {
-        if (!videoData) return null;
-
-        const fileSizeDisplay = videoData.fileUrl ? 'Salvo no disco' : 'N/A';
-        const fileName = videoData.fileUrl?.split(/[\\/]/).pop() || 'N/A';
-
         const handleOpenFolder = async () => {
             if (!videoData.fileUrl) return;
             try {
-                // Reveal the video file in the containing folder
                 const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
                 await revealItemInDir(videoData.fileUrl);
             } catch (err) {
-                console.error('Failed to open folder:', err);
-                alert(`Caminho do vídeo:\n${videoData.fileUrl}`);
+                console.error(err);
             }
         };
 
         return (
             <div className="p-6 space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <StatCard icon={Film} label="Resolução" value={videoData.resolution || 'N/A'} color="emerald" />
-                    <StatCard icon={Clock} label="Duração" value={videoData.duration ? `${videoData.duration.toFixed(1)}s` : 'N/A'} color="blue" />
-                    <StatCard icon={HardDrive} label="Formato" value="MP4 (H.264)" color="purple" />
+                    <StatCard icon={Film} label="Resolução" value={videoData.resolution || '1080x1920'} color="emerald" />
+                    <StatCard icon={Clock} label="Duração" value={`${videoData.duration?.toFixed(1) || 0}s`} color="blue" />
+                    <StatCard icon={HardDrive} label="Formato" value="MP4" color="purple" />
                 </div>
-
-                {/* Video Player */}
                 {videoData.fileUrl && (
-                    <section>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                            <Play size={14} /> Player do Vídeo Final
-                        </h4>
-                        <div className="bg-black rounded-2xl overflow-hidden border border-slate-200 shadow-lg">
-                            <video
-                                controls
-                                className="w-full max-h-[480px]"
-                                src={convertFileSrc(videoData.fileUrl)}
-                                preload="metadata"
-                            >
-                                Seu navegador não suporta o elemento de vídeo.
-                            </video>
-                        </div>
-                    </section>
+                    <div className="bg-black rounded-2xl overflow-hidden border shadow-lg">
+                        <video controls className="w-full max-h-[500px]" src={convertFileSrc(videoData.fileUrl)} />
+                    </div>
                 )}
-
-                {/* File Details */}
-                <section>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <Download size={14} /> Detalhes do Arquivo
-                    </h4>
-                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
-                        <DetailRow label="Arquivo" value={fileName} />
-                        <DetailRow label="Caminho" value={videoData.fileUrl || 'N/A'} />
-                        <DetailRow label="Status" value={fileSizeDisplay} />
-                    </div>
-                </section>
-
-                {/* Action Button */}
+                <div className="bg-slate-50 p-4 rounded-xl space-y-2">
+                    <DetailRow label="Arquivo" value={videoData.fileUrl?.split(/[\\/]/).pop() || 'N/A'} />
+                    <DetailRow label="Caminho" value={videoData.fileUrl || 'N/A'} />
+                </div>
                 {videoData.fileUrl && (
-                    <div className="flex gap-3">
-                        <button
-                            onClick={handleOpenFolder}
-                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-50 text-emerald-700 font-semibold rounded-2xl border border-emerald-200 hover:bg-emerald-100 transition-all active:scale-[0.98]"
-                        >
-                            <FolderOpen size={18} />
-                            Abrir Pasta do Vídeo
-                        </button>
-                    </div>
+                    <button onClick={handleOpenFolder} className="w-full py-3 bg-emerald-50 text-emerald-700 font-bold rounded-2xl border border-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-2">
+                        <FolderOpen size={18} /> Ver na Pasta
+                    </button>
                 )}
             </div>
         );
     };
 
+
+    const renderScenesDetails = (scenesData: ScenesStageData) => (
+        <div className="p-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <StatCard icon={Film} label="Cenas" value={String(scenesData.scenes.length)} color="blue" />
+                <StatCard icon={Type} label="Palavras" value={String(scenesData.scenes.reduce((acc, s) => acc + (s.scriptText?.split(/\s+/).length || 0), 0))} color="purple" />
+                <StatCard icon={Zap} label="Modo" value={scenesData.mode} color="emerald" />
+                <StatCard icon={Mic} label="Áudios" value={`${scenesData.scenes.filter(s => !!s.audioUrl).length}/${scenesData.scenes.length}`} color="orange" />
+            </div>
+            <div className="grid grid-cols-1 gap-4">
+                {scenesData.scenes.map(scene => (
+                    <SceneCard
+                        key={scene.id}
+                        scene={scene}
+                        project={project}
+                        config={config}
+                        profile={profile}
+                        generatingAudioIds={generatingAudioIds}
+                        generatingImageIds={generatingImageIds}
+                        sceneAudioConfigs={sceneAudioConfigs}
+                        sceneImageConfigs={sceneImageConfigs}
+                        elevenLabsVoices={elevenLabsVoices}
+                        onAudioGenerate={handleGenerateSceneAudio}
+                        onImageGenerate={handleGenerateSceneImage}
+                        onAudioConfigChange={(sceneId, cfg) => setSceneAudioConfigs(prev => ({ ...prev, [sceneId]: cfg }))}
+                        onImageConfigChange={(sceneId, cfg) => setSceneImageConfigs(prev => ({ ...prev, [sceneId]: cfg }))}
+                        onImageClick={(url, text) => setImageViewerData({ url, text })}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+
     const renderContent = () => {
+        if (!project.stageData) return null;
         switch (stage) {
-            case PipelineStage.REFERENCE:
-                return renderReferenceDetails(project.stageData.reference as ReferenceStageData);
-            case PipelineStage.SCRIPT:
-                return renderScriptDetails(project.stageData.script);
-            case PipelineStage.AUDIO:
-                return renderAudioDetails(project.stageData.audio as AudioStageData);
-            case PipelineStage.AUDIO_COMPRESS:
-                return renderAudioCompressDetails(project.stageData.audio_compress as AudioCompressStageData);
-            case PipelineStage.SUBTITLES:
-                return renderSubtitlesDetails(project.stageData.subtitles as SubtitlesStageData);
-            case PipelineStage.IMAGES:
-                return renderImagesDetails(project.stageData.subtitles as SubtitlesStageData);
-            case PipelineStage.VIDEO:
-                return renderVideoDetails(project.stageData.video as VideoStageData);
-            default:
-                return (
-                    <div className="p-8 text-center text-slate-500">
-                        <Info className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                        <p>Detalhes ainda não disponíveis para este estágio.</p>
-                    </div>
-                );
+            case PipelineStage.SCENES: return renderScenesDetails(project.stageData.scenes as ScenesStageData);
+            case PipelineStage.REFERENCE: return renderReferenceDetails(project.stageData.reference as ReferenceStageData);
+            case PipelineStage.SCRIPT: return renderScriptDetails(project.stageData.script);
+            case PipelineStage.AUDIO: return renderAudioDetails(project.stageData.audio as AudioStageData);
+            case PipelineStage.AUDIO_COMPRESS: return renderAudioCompressDetails(project.stageData.audio_compress as AudioCompressStageData);
+            case PipelineStage.SUBTITLES: return renderSubtitlesDetails(project.stageData.subtitles as SubtitlesStageData);
+            case PipelineStage.IMAGES: return renderImagesDetails(project.stageData.subtitles as SubtitlesStageData);
+            case PipelineStage.VIDEO: return renderVideoDetails(project.stageData.video as VideoStageData);
+            default: return <div className="p-12 text-center text-slate-400">Dados não disponíveis.</div>;
         }
     };
 
-    const formatBytes = (bytes: number) => {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-    };
-
     return (
-        <>
-            <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
-                <div
-                    className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200"
-                    onClick={e => e.stopPropagation()}
-                >
-                    {/* Header */}
-                    <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm" style={{ backgroundColor: meta.bgColor, color: meta.color }}>
-                                {stage === PipelineStage.REFERENCE ? <BookOpen size={24} /> : <FileText size={24} />}
-                            </div>
-                            <div>
-                                <h3 className="text-xl font-bold text-slate-900">Detalhes: {meta.label}</h3>
-                                <p className="text-sm text-slate-500 flex items-center gap-2">
-                                    <span className="font-medium text-slate-700">{project.title}</span>
-                                    <span className="w-1 h-1 rounded-full bg-slate-300" />
-                                    <span>{new Date(project.updatedAt).toLocaleDateString()}</span>
-                                </p>
-                            </div>
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="px-6 py-5 border-b flex items-center justify-between bg-slate-50/50">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm" style={{ backgroundColor: meta.bgColor, color: meta.color }}>{meta.icon || <FileText size={24}/>}</div>
+                        <div>
+                            <h3 className="text-xl font-bold text-slate-900">{meta.label}</h3>
+                            <p className="text-xs text-slate-500">{project.title} • {new Date(project.updatedAt).toLocaleTimeString()}</p>
                         </div>
-                        <button
-                            onClick={onClose}
-                            className="p-2.5 rounded-2xl hover:bg-slate-200/50 text-slate-400 transition-colors"
-                        >
-                            <X size={20} />
-                        </button>
                     </div>
-
-                    {/* Content Area */}
-                    <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
-                        {renderContent()}
-                    </div>
-
-                    {/* Footer */}
-                    <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-                            <Cpu size={14} className="text-purple-400" />
-                            {(() => {
-                                if (stage === PipelineStage.IMAGES || stage === PipelineStage.THUMBNAIL) {
-                                    return (
-                                        <>
-                                            Modelo de Imagem: <span className="text-slate-900">{(() => { const m = getImageModel(({ 'FLUX': 'FLUX.1', 'NANO_BANANA': 'Nano Banana', 'IDEOGRAM': 'Ideogram', 'TOGETHER': 'FLUX.1-Together' })[config?.providers.image || 'FLUX'] || 'FLUX.1'); return m ? `${m.label} (${m.badge})` : 'N/A'; })()}</span>
-                                        </>
-                                    );
-                                }
-                                if (stage === PipelineStage.AUDIO || stage === PipelineStage.AUDIO_COMPRESS) {
-                                    return (
-                                        <>
-                                            Modelo de Áudio: <span className="text-slate-900">{config?.providers.tts === 'ELEVENLABS' ? 'ElevenLabs' : 'Gemini Voice'}</span>
-                                        </>
-                                    );
-                                }
-                                if (stage === PipelineStage.SCRIPT || stage === PipelineStage.REFERENCE) {
-                                    return (
-                                        <>
-                                            Modelo de Script: <span className="text-slate-900">{config?.scriptingModel || config?.providers.scripting || 'Gemini'}</span>
-                                        </>
-                                    );
-                                }
-                                if (stage === PipelineStage.VIDEO) {
-                                    return (
-                                        <>
-                                            Motor de Renderização: <span className="text-slate-900">FFmpeg Nativo (H.264 + AAC)</span>
-                                        </>
-                                    );
-                                }
-                                return (
-                                    <>
-                                        Sistema Ativado: <span className="text-slate-900">Pipeline Alpha</span>
-                                    </>
-                                );
-                            })()}
-                        </div>
-                        <button
-                            onClick={onClose}
-                            className="px-6 py-2.5 bg-slate-900 text-white font-semibold rounded-2xl hover:bg-slate-800 transition-all shadow-md active:scale-95"
-                        >
-                            Fechar Visualização
-                        </button>
-                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-xl transition-colors"><X size={20}/></button>
                 </div>
-            </div >
-            {renderImageViewer()}
-        </>
+                <div className="flex-1 overflow-y-auto custom-scrollbar">{renderContent()}</div>
+            </div>
+            {imageViewerData && (
+                <div className="fixed inset-0 z-[20000] bg-black/98 flex flex-col items-center justify-center p-8 animate-in fade-in" onClick={() => setImageViewerData(null)}>
+                    <img src={imageViewerData.url} className="max-w-full max-h-full object-contain rounded-2xl shadow-2xl shadow-primary/20" />
+                    <p className="mt-6 text-white text-xl font-light italic max-w-2xl text-center">{imageViewerData.text}</p>
+                    <button className="absolute top-8 right-8 text-white/50 hover:text-white"><X size={40}/></button>
+                </div>
+            )}
+        </div>
     );
 }
 
+// ─── HELPER COMPONENTS ────────────────────────────────────
 
 function DetailRow({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
     return (
@@ -1065,8 +756,234 @@ function StatCard({ icon: Icon, label, value, color }: { icon: any; label: strin
             </div>
             <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest opacity-70 leading-none mb-1">{label}</p>
-                <p className="text-base font-bold leading-none">{value}</p>
+                <p className="text-sm font-black tabular-nums">{value}</p>
             </div>
         </div>
     );
 }
+
+// ─── SCENE CARD COMPONENT (MEMOIZED) ──────────────────────
+
+const SceneCard = React.memo(({ 
+    scene, project, config, profile, 
+    generatingAudioIds, generatingImageIds, 
+    sceneAudioConfigs, sceneImageConfigs, 
+    elevenLabsVoices, 
+    onAudioGenerate, onImageGenerate, 
+    onAudioConfigChange, onImageConfigChange,
+    onImageClick
+}: {
+    scene: SceneData;
+    project: VideoProject;
+    config: EngineConfig | null;
+    profile: ChannelProfile | null;
+    generatingAudioIds: number[];
+    generatingImageIds: number[];
+    sceneAudioConfigs: Record<number, { provider: string, voiceId: string }>;
+    sceneImageConfigs: Record<number, { modelId: string }>;
+    elevenLabsVoices: any[]; // Assuming ElevenLabsVoice type if available
+    onAudioGenerate: (id: number) => void;
+    onImageGenerate: (id: number) => void;
+    onAudioConfigChange: (id: number, cfg: { provider: string, voiceId: string }) => void;
+    onImageConfigChange: (id: number, cfg: { modelId: string }) => void;
+    onImageClick: (url: string, text: string) => void;
+}) => {
+    const sceneConfig = sceneAudioConfigs[scene.id];
+    const currentProvider = sceneConfig?.provider || config?.providers.tts || 'google';
+    
+    // Helper local para voz
+    const getInitialVoice = (provider: string) => {
+        const pv = profile?.voiceProfile || '';
+        if (provider === 'google') {
+            const googleVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede'];
+            const matched = googleVoices.find(v => pv.toLowerCase().includes(v.toLowerCase()));
+            return matched || 'Kore';
+        }
+        return pv || (elevenLabsVoices[0]?.voice_id || '');
+    };
+
+    const currentVoiceId = sceneConfig?.voiceId || getInitialVoice(currentProvider);
+
+    return (
+        <div className="bg-white border rounded-2xl p-5 shadow-sm transition-shadow hover:shadow-md">
+            <div className="flex justify-between mb-4">
+                <span className="text-xs font-bold text-slate-400">CENA #{scene.id}</span>
+                {!!scene.audioUrl && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 rounded-lg font-bold">ÁUDIO OK</span>}
+            </div>
+            <div className="space-y-4">
+                <div className="text-sm leading-relaxed text-slate-700 bg-slate-50 p-3 rounded-xl border line-clamp-3 overflow-hidden h-[5.25rem]">
+                    {scene.scriptText}
+                </div>
+                
+                <div className="flex flex-wrap items-center gap-3 py-1">
+                    <div className="flex items-center gap-2">
+                        <select 
+                            className="bg-slate-100 text-[11px] font-bold rounded-lg px-2 py-1.5 outline-none hover:bg-slate-200 transition-colors"
+                            value={currentProvider}
+                            onChange={(e) => {
+                                const newProv = e.target.value;
+                                const newVoice = newProv === 'google' ? (profile?.voiceProfile || 'Kore') : (elevenLabsVoices[0]?.voice_id || '');
+                                onAudioConfigChange(scene.id, { provider: newProv, voiceId: newVoice });
+                            }}
+                        >
+                            <option value="google">Google TTS</option>
+                            <option value="elevenlabs">ElevenLabs</option>
+                        </select>
+                        <select 
+                            className="bg-slate-100 text-[11px] font-bold rounded-lg px-2 py-1.5 outline-none max-w-[120px] hover:bg-slate-200 transition-colors"
+                            value={currentVoiceId}
+                            onChange={(e) => onAudioConfigChange(scene.id, { provider: currentProvider, voiceId: e.target.value })}
+                        >
+                            {currentProvider === 'elevenlabs' 
+                                ? elevenLabsVoices.map(v => <option key={v.voice_id} value={v.voice_id}>{v.name}</option>)
+                                : ['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede'].map(v => <option key={v} value={v}>{v}</option>)
+                            }
+                        </select>
+                    </div>
+                    <button
+                        onClick={() => onAudioGenerate(scene.id)}
+                        disabled={generatingAudioIds.includes(scene.id)}
+                        className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm
+                            ${generatingAudioIds.includes(scene.id) 
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700 active:scale-95'
+                            }
+                        `}
+                    >
+                        {generatingAudioIds.includes(scene.id) ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+                        {generatingAudioIds.includes(scene.id) ? 'Sintetizando...' : 'Gerar Áudio'}
+                    </button>
+                </div>
+
+                {/* Player assíncrono ja existente no escopo do arquivo */}
+                <SceneAudioPlayerWrapper projectId={project.id} sceneId={scene.id} audioUrl={scene.audioUrl} />
+
+                <div className="text-[11px] leading-relaxed text-slate-400 italic bg-slate-50/50 p-3 rounded-xl border border-dashed line-clamp-3 overflow-hidden h-[4.5rem]">
+                    {scene.visualPrompt}
+                </div>
+
+                {/* Geração de Imagem */}
+                <div className="flex flex-wrap items-center gap-3 py-1 mt-1">
+                    <div className="flex items-center gap-2">
+                        <select 
+                            className="bg-slate-100 text-[11px] font-bold rounded-lg px-2 py-1.5 outline-none max-w-[150px] hover:bg-slate-200 transition-colors"
+                            value={sceneImageConfigs[scene.id]?.modelId || config?.providers.image || 'FLUX'}
+                            onChange={(e) => onImageConfigChange(scene.id, { modelId: e.target.value })}
+                        >
+                            {IMAGE_MODELS.map(m => (
+                                <option key={m.id} value={m.id}>{m.label}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <button
+                        onClick={() => onImageGenerate(scene.id)}
+                        disabled={generatingImageIds.includes(scene.id)}
+                        className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm
+                            ${generatingImageIds.includes(scene.id) 
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                                : 'bg-primary text-white hover:bg-primary/90 active:scale-95'
+                            }
+                        `}
+                    >
+                        {generatingImageIds.includes(scene.id) ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
+                        {generatingImageIds.includes(scene.id) ? 'Gerando...' : 'Gerar Imagem'}
+                    </button>
+                </div>
+
+                {/* Preview de imagem ja existente no escopo do arquivo */}
+                <SceneImagePreviewWrapper 
+                    projectId={project.id} 
+                    sceneId={scene.id} 
+                    prompt={scene.visualPrompt} 
+                    imageUrl={scene.imageUrl} 
+                    onImageClick={onImageClick}
+                />
+            </div>
+        </div>
+    );
+});
+
+// Wrappers para os sub-componentes (estatizados para evitar re-declaração)
+function SceneAudioPlayer({ projectId, sceneId, refreshKey }: { projectId: string, sceneId: number, refreshKey: string }) {
+    const [url, setUrl] = React.useState<string | null>(null);
+
+    React.useEffect(() => {
+        const resolve = async () => {
+            try {
+                const relPath = resolveAudioPath(`${projectId}:scene_${sceneId}`);
+                const absPath = await DiskStorage.getAbsolutePath(relPath);
+                const fileExists = await DiskStorage.exists(relPath);
+                if (fileExists) {
+                    setUrl(convertFileSrc(absPath));
+                }
+            } catch (e) {
+                console.error('Failed to resolve audio path:', e);
+            }
+        };
+        resolve();
+    }, [projectId, sceneId, refreshKey]);
+
+    if (!url) return null;
+
+    return (
+        <div className="mt-3 p-3 bg-slate-100/50 rounded-2xl border flex items-center gap-3 shadow-inner animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                <Volume2 size={16} />
+            </div>
+            <audio src={url} controls className="h-8 flex-1 custom-audio-player" />
+        </div>
+    );
+}
+
+function SceneImagePreview({ projectId, sceneId, prompt, refreshKey, onImageClick }: { projectId: string, sceneId: number, prompt: string, refreshKey: string, onImageClick: (url: string, text: string) => void }) {
+    const [url, setUrl] = React.useState<string | null>(null);
+
+    React.useEffect(() => {
+        const resolve = async () => {
+            try {
+                const relPath = DiskStorage.joinPath('projects', projectId, 'scenes', `scene_${sceneId}.png`);
+                const absPath = await DiskStorage.getAbsolutePath(relPath);
+                const fileExists = await DiskStorage.exists(relPath);
+                if (fileExists) {
+                    setUrl(convertFileSrc(absPath));
+                }
+            } catch (e) {
+                console.error('Failed to resolve image path:', e);
+            }
+        };
+        resolve();
+    }, [projectId, sceneId, refreshKey]);
+
+    if (!url) return null;
+
+    return (
+        <div 
+            className="mt-3 relative group cursor-pointer overflow-hidden rounded-2xl border aspect-video bg-slate-100 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300"
+            onClick={() => onImageClick(url, prompt)}
+        >
+            <img 
+                src={url} 
+                alt="Preview"
+                className="w-full h-full object-cover transition-transform group-hover:scale-105"
+            />
+            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <div className="p-3 bg-white/20 backdrop-blur-md rounded-full text-white border border-white/30 scale-90 group-hover:scale-100 transition-transform">
+                    <ImageIcon size={24} />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function SceneAudioPlayerWrapper({ projectId, sceneId, audioUrl }: { projectId: string, sceneId: number, audioUrl?: string }) {
+    if (!audioUrl) return null;
+    return <SceneAudioPlayer projectId={projectId} sceneId={sceneId} refreshKey={audioUrl} />;
+}
+
+function SceneImagePreviewWrapper({ projectId, sceneId, prompt, imageUrl, onImageClick }: { projectId: string, sceneId: number, prompt: string, imageUrl?: string, onImageClick: (url: string, text: string) => void }) {
+    if (!imageUrl) return null;
+    return <SceneImagePreview projectId={projectId} sceneId={sceneId} prompt={prompt} refreshKey={imageUrl} onImageClick={onImageClick} />;
+}
+
+// Adicionando display names para facilitar debug no React DevTools
+SceneCard.displayName = 'SceneCard';

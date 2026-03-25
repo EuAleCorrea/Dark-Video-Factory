@@ -44,11 +44,11 @@ const STAGE_DATA_KEY: Record<PipelineStage, keyof StageDataMap> = {
 const STAGE_ICON_MAP: Record<PipelineStage, { icon: any; tooltip: string }> = {
     [PipelineStage.REFERENCE]: { icon: BookOpen, tooltip: 'Referência' },
     [PipelineStage.SCRIPT]: { icon: FileText, tooltip: 'Roteiro' },
-    [PipelineStage.AUDIO]: { icon: Mic, tooltip: 'Áudio' },
+    [PipelineStage.AUDIO]: { icon: Mic, tooltip: 'Audio e Imagem' },
     [PipelineStage.SCENES]: { icon: Layout, tooltip: 'Cenas' },
     [PipelineStage.AUDIO_COMPRESS]: { icon: Volume2, tooltip: 'Compressão' },
     [PipelineStage.SUBTITLES]: { icon: Subtitles, tooltip: 'Legendas' },
-    [PipelineStage.IMAGES]: { icon: ImageIcon, tooltip: 'Imagens' },
+    [PipelineStage.IMAGES]: { icon: ImageIcon, tooltip: 'Imagens (Obsoleto)' },
     [PipelineStage.VIDEO]: { icon: Film, tooltip: 'Vídeo' },
     [PipelineStage.PUBLISH_YT]: { icon: Upload, tooltip: 'Publicar YT' },
     [PipelineStage.THUMBNAIL]: { icon: ImagePlus, tooltip: 'Thumbnail' },
@@ -94,6 +94,19 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
     const StatusIcon = statusConf.icon;
     const thumbnail = project.stageData.reference?.thumbnailUrl;
     const completedStages = getCompletedStages(project);
+
+    const currentStageIdx = PIPELINE_STAGES_ORDER.indexOf(project.currentStage);
+    const hasReachedAudio = currentStageIdx >= PIPELINE_STAGES_ORDER.indexOf(PipelineStage.SCENES);
+    
+    let audioCounter = null;
+    if (hasReachedAudio && project.stageData.scenes?.scenes) {
+        const scenes = project.stageData.scenes.scenes;
+        const total = scenes.length;
+        if (total > 0) {
+            const withAudio = scenes.filter(s => !!s.audioUrl).length;
+            audioCounter = { withAudio, total };
+        }
+    }
 
     return (
         <div
@@ -147,7 +160,7 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
                     }}
                 >
                     <StatusIcon className={`w-3.5 h-3.5 ${project.status === 'processing' ? 'animate-spin' : ''}`} />
-                    {statusConf.label}
+                    {project.status === 'processing' && project.errorMessage ? project.errorMessage : statusConf.label}
                 </div>
 
                 <span className="text-sm text-theme-placeholder">
@@ -189,6 +202,35 @@ export default function ProjectCard({ project, stageMeta, isSelected, onToggleSe
                         </button>
                     );
                 })}
+
+                {/* Badge de progresso de Áudio / Botão Avançar */}
+                {audioCounter && (
+                    <div className="ml-auto flex items-center gap-2">
+                        {project.currentStage === PipelineStage.AUDIO && audioCounter.withAudio === audioCounter.total ? (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (onStageClick) onStageClick(project, PipelineStage.SUBTITLES);
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 text-white border border-emerald-500 hover:bg-emerald-700 transition-all shadow-sm animate-pulse"
+                                title="Áudios completos! Clique para gerar legendas."
+                            >
+                                <Subtitles size={12} />
+                                <span className="text-[10px] font-bold uppercase tracking-wider">Avançar</span>
+                            </button>
+                        ) : (
+                            <div 
+                                className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-100"
+                                title={`${audioCounter.withAudio} de ${audioCounter.total} áudios gerados`}
+                            >
+                                <Mic size={10} />
+                                <span className="text-[10px] font-bold tracking-wider uppercase">
+                                    Áudios {audioCounter.withAudio}/{audioCounter.total}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Error message */}

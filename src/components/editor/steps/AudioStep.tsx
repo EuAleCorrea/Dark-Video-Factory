@@ -315,7 +315,7 @@ export const AudioStep: React.FC<AudioStepProps> = ({
       {isAllDone && (
         <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center gap-3 text-blue-500 text-[10px] font-bold uppercase tracking-wider mt-2">
            <Settings2 size={14} />
-           Áudios prontos. Configure as imagens no próximo passo.
+           Áudios e imagens prontos. Prossiga para a exportação final.
         </div>
       )}
     </div>
